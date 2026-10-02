@@ -1,0 +1,169 @@
+# tally
+
+A full-screen terminal invoice manager for a UK sole trader who isn't
+VAT-registered. It keeps clients, invoices, payments, credit notes and refunds
+in a local SQLite database, and writes each invoice as an A4 PDF using an
+embedded [Typst](https://typst.app) compiler. No external tools are needed.
+
+```
+ tally   1 Dashboard   2 Invoices   3 Clients   4 Reports   5 Settings
+
+ ┌ Outstanding ─────────┐ ┌ Overdue ─────────────┐ ┌ Income 2026-27 ──────┐ ┌ Drafts ──────────────┐
+ │ £1,800.00            │ │ £1,800.00            │ │ £1,650.00            │ │ 0                    │
+ │ 1 invoice            │ │ 1 invoice            │ │ received, cash basis │ │ drafts               │
+ └──────────────────────┘ └──────────────────────┘ └──────────────────────┘ └──────────────────────┘
+
+ Needs attention & recent
+ Number      Client      Issued       Due                       Total     Balance  Status
+ 2026-0002   Acme Ltd    01 Jul 2026  31 Jul 2026 (64d late)  £1,800.00  £1,800.00  Overdue
+ 2026-0001   Acme Ltd    30 Sep 2026  30 Oct 2026             £1,800.00      £0.00  Paid
+```
+
+## Features
+
+- **Invoices** with hourly, daily and fixed-price lines, a supply date or
+  period (required on UK invoices), and a due date that follows your payment
+  terms.
+- **Lock on issue.** Issuing assigns the next number, freezes your details and
+  the client's, writes the PDF and locks the invoice. Corrections are made with
+  **credit notes**. SQLite triggers enforce the lock as well as the app.
+- **Configurable numbering**, e.g. `{YEAR}-{SEQ:4}` → `2026-0001`, restarting
+  every 1 January.
+- **Status tracking:** Draft → Issued → Sent → Part paid → Paid, with
+  Overdue and Credited worked out automatically.
+- **Partial payments, overpayments and refunds.**
+- **Optional late-payment notice** for business clients (statutory interest
+  under the Late Payment of Commercial Debts Act).
+- **Reports:**
+  - outstanding and overdue invoices, grouped by days late
+  - tax-year income (6 April to 5 April) on a cash basis
+  - CSV export
+- **Safe storage.** The live database stays on your Mac. PDFs, CSV exports
+  and automatic backups go to a folder you choose, such as iCloud Drive.
+- **Customisable PDF layout** through a `template.typ` override, with no
+  rebuild needed.
+
+## Install
+
+You need Rust 1.88 or newer, and Xcode command-line tools so the bundled
+SQLite can compile.
+
+```bash
+cargo install --path .
+```
+
+This puts `tally` in `~/.cargo/bin`. To run it from the source tree instead:
+
+```bash
+cargo run --release
+```
+
+## First run
+
+Running `tally` the first time opens a setup wizard that asks for:
+
+- your name, address and contact details
+- your bank details, which are printed on every invoice
+- your payment terms, e.g. 30 days
+- your invoice and credit-note number patterns
+- an **output folder** for PDFs, backups and exports
+
+Everything can be changed later under **5 Settings**. Changes only affect
+invoices you issue after that, because issued invoices keep the details they
+were issued with.
+
+## Everyday use
+
+| Task | Keys |
+|---|---|
+| Add a client | `3`, then `n` |
+| Start an invoice | `n` on the Dashboard or Invoices tab, or `i` on a client |
+| Add or edit lines | in the editor, move down past *Notes* into Lines; `a` adds, `Enter` edits, `d` deletes, `K`/`J` reorder |
+| Save a draft | `Ctrl+S` |
+| Issue (number + PDF + lock) | `i` on the draft |
+| Mark as sent | `s` |
+| Record a payment | `p` (pre-filled with the balance) |
+| Credit note | `c` |
+| Refund an overpayment or credit | `r` (only offered when money is owed back) |
+| Open or regenerate the PDF | `o` / `R` |
+| Duplicate an invoice as a new draft | `u` |
+| Reports | `4`, then `Tab` to switch reports and `←`/`→` to change tax year |
+| Back up now | `Ctrl+B` in Settings, or `tally backup` |
+| Quit (backs up automatically) | `q` or `Ctrl+C` |
+
+Lists use `↑`/`↓` or `j`/`k`. Forms use `↑`/`↓`/`Tab` to move between
+fields, `Enter` to go to the next field (or save on the last one), `Ctrl+S`
+to save and `Esc` to cancel. Dates can be typed as `2026-10-02`,
+`02/10/2026`, `2/10/26` or `today`.
+
+## Command line
+
+```
+tally                     Open the full-screen app
+tally backup              Back up the database to <output folder>/backups
+tally sample-pdf [FILE]   Render a sample invoice (good for testing a template)
+tally where               Show where the database and output folder are
+tally help                Show help
+```
+
+Set `TALLY_DB=/path/to/test.db` to use a different database, e.g. for trying
+things out.
+
+## Where things live
+
+| What | Where |
+|---|---|
+| Database (live) | `~/Library/Application Support/tally/tally.db` |
+| Invoice and credit-note PDFs | `<output folder>/2026/2026-0001_Acme-Ltd.pdf` |
+| Backups (newest *n* kept) | `<output folder>/backups/tally-YYYYMMDD-HHMMSS.db` |
+| CSV exports | `<output folder>/exports/YYYYMMDD-HHMMSS/` |
+| Template override (optional) | `<output folder>/template.typ` |
+| Extra fonts (optional) | `<output folder>/fonts/*.ttf` / `*.otf` |
+
+The live database is deliberately kept out of the synced folder. Sync
+services can corrupt an SQLite file by copying it while it's being written.
+Backups use SQLite's online backup API and are written under a temporary
+name first, so a half-written backup never gets synced.
+
+To restore a backup:
+
+1. Quit tally.
+2. Delete `tally.db-wal` and `tally.db-shm` next to the database, if they exist.
+3. Copy the backup file over `tally.db`.
+
+## Customising the invoice
+
+Copy [`templates/invoice.typ`](templates/invoice.typ) to
+`<output folder>/template.typ` and edit it. Preview it with
+`tally sample-pdf`, and press `Ctrl+T` in Settings to reload it in a running
+app. See [docs/TEMPLATES.md](docs/TEMPLATES.md) for the data available to the
+template.
+
+## UK specifics
+
+What the app does on your behalf, and why:
+
+- **Required invoice fields.** Every invoice includes the details GOV.UK says
+  must appear: a unique number, your name and address, the client's name and
+  address, a description, the supply date, the invoice date, the amounts and
+  the total.
+- **No VAT.** Invoices show no VAT lines and no VAT number, since a business
+  that isn't registered can't charge VAT.
+- **Cash-basis income.** The income report counts money in the tax year it was
+  received, and refunds in the tax year they were paid out. Cash basis has been
+  the default for sole traders since April 2024.
+- **Late-payment notice.** The notice can only be switched on for business
+  clients, because statutory interest doesn't apply to individuals.
+
+tally is a record-keeping tool, not tax advice.
+
+## Development
+
+```bash
+cargo test                  # unit tests + an end-to-end lifecycle test
+cargo clippy --all-targets
+cargo fmt
+```
+
+[docs/DESIGN.md](docs/DESIGN.md) covers the architecture, the business rules
+and the reasons behind the main decisions.
