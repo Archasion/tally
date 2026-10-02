@@ -14,7 +14,8 @@ use crate::domain::{Address, BankDetails, Business};
 use crate::{backup, paths};
 
 pub fn form(b: Option<&Business>) -> Form {
-    let get = |f: fn(&Business) -> String, default: &str| b.map(f).unwrap_or_else(|| default.to_string());
+    let get =
+        |f: fn(&Business) -> String, default: &str| b.map(f).unwrap_or_else(|| default.to_string());
     Form::new()
         .text("name", "Your name", get(|b| b.name.clone(), ""))
         .required()
@@ -64,14 +65,26 @@ fn parse(form: &mut Form) -> Option<Business> {
         form.error = Some(msg);
         return None;
     }
-    let sort_digits: String = form.value("sort_code").chars().filter(char::is_ascii_digit).collect();
-    if sort_digits.len() != 6 || form.value("sort_code").chars().any(|c| !c.is_ascii_digit() && c != '-' && c != ' ') {
+    let sort_digits: String = form
+        .value("sort_code")
+        .chars()
+        .filter(char::is_ascii_digit)
+        .collect();
+    if sort_digits.len() != 6
+        || form
+            .value("sort_code")
+            .chars()
+            .any(|c| !c.is_ascii_digit() && c != '-' && c != ' ')
+    {
         form.fail("sort_code", "Sort code must be 6 digits, e.g. 12-34-56");
         return None;
     }
     let account = form.value("account_number").replace(' ', "");
     if !(6..=10).contains(&account.len()) || !account.chars().all(|c| c.is_ascii_digit()) {
-        form.fail("account_number", "Account number must be digits only (usually 8)");
+        form.fail(
+            "account_number",
+            "Account number must be digits only (usually 8)",
+        );
         return None;
     }
     let Ok(terms) = form.value("terms").parse::<u32>() else {
@@ -85,7 +98,10 @@ fn parse(form: &mut Form) -> Option<Business> {
         }
     }
     if form.value("invoice_pattern") == form.value("credit_pattern") {
-        form.fail("credit_pattern", "Credit notes need a different pattern from invoices");
+        form.fail(
+            "credit_pattern",
+            "Credit notes need a different pattern from invoices",
+        );
         return None;
     }
     let backups = match form.value("backups").parse::<u32>() {
@@ -107,7 +123,12 @@ fn parse(form: &mut Form) -> Option<Business> {
         phone: form.value("phone"),
         bank: BankDetails {
             account_name: form.value("account_name"),
-            sort_code: format!("{}-{}-{}", &sort_digits[0..2], &sort_digits[2..4], &sort_digits[4..6]),
+            sort_code: format!(
+                "{}-{}-{}",
+                &sort_digits[0..2],
+                &sort_digits[2..4],
+                &sort_digits[4..6]
+            ),
             account_number: account,
         },
         payment_terms_days: terms,
@@ -125,8 +146,12 @@ impl App {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         if !is_wizard && ctrl && key.code == KeyCode::Char('b') {
             let b = self.db.require_business()?;
-            let path = backup::run(&self.db, &paths::expand_home(&b.output_dir), b.backups_to_keep)?;
-            self.success(format!("Backed up to {}", path.display()));
+            let path = backup::run(
+                &self.db,
+                &paths::expand_home(&b.output_dir),
+                b.backups_to_keep,
+            )?;
+            self.success(format!("Backed up to {}", paths::display(&path)));
             return Ok(());
         }
         if !is_wizard && ctrl && key.code == KeyCode::Char('t') {
@@ -151,10 +176,15 @@ impl App {
                 }
             }
             Outcome::Submit => {
-                let Some(business) = parse(form) else { return Ok(()) };
+                let Some(business) = parse(form) else {
+                    return Ok(());
+                };
                 let dir = paths::expand_home(&business.output_dir);
                 if let Err(e) = std::fs::create_dir_all(&dir) {
-                    form.fail("output_dir", format!("Can't create {}: {e}", dir.display()));
+                    form.fail(
+                        "output_dir",
+                        format!("Can't create {}: {e}", paths::display(&dir)),
+                    );
                     return Ok(());
                 }
                 if let Err(e) = self.db.save_business(&business) {
@@ -180,7 +210,9 @@ impl App {
         let intro: Vec<Line> = if is_wizard {
             vec![
                 Line::styled("Welcome to tally", theme::title()),
-                Line::from("Enter your details once; they appear on every invoice. You can change them later in Settings."),
+                Line::from(
+                    "Enter your details once; they appear on every invoice. You can change them later in Settings.",
+                ),
                 Line::from(vec![
                     Span::raw("Fields marked "),
                     Span::styled("*", theme::muted()),
@@ -188,17 +220,25 @@ impl App {
                 ]),
             ]
         } else {
-            let db_path = paths::database_path().map(|p| p.display().to_string()).unwrap_or_default();
+            let db_path = paths::database_path()
+                .map(|p| paths::display(&p))
+                .unwrap_or_default();
             let override_path = paths::template_override(&self.output_dir());
             let template = if override_path.is_file() {
-                format!("{} (override)", override_path.display())
+                format!("{} (override)", paths::display(&override_path))
             } else {
                 "built-in".to_string()
             };
             vec![
                 Line::styled("Your business details and settings", theme::title()),
-                Line::from(vec![Span::styled("Database: ", theme::muted()), Span::raw(db_path)]),
-                Line::from(vec![Span::styled("Template: ", theme::muted()), Span::raw(template)]),
+                Line::from(vec![
+                    Span::styled("Database: ", theme::muted()),
+                    Span::raw(db_path),
+                ]),
+                Line::from(vec![
+                    Span::styled("Template: ", theme::muted()),
+                    Span::raw(template),
+                ]),
             ]
         };
         let [intro_area, _, form_area] = Layout::vertical([
@@ -211,7 +251,16 @@ impl App {
         let active = self.modal.is_none();
         if let Screen::Wizard(form) | Screen::Settings(form) = &self.screen {
             let width = form_area.width.min(100);
-            form.render(f, Rect { width, ..form_area }, active);
+            let height = form_area.height.min(form.height());
+            form.render(
+                f,
+                Rect {
+                    width,
+                    height,
+                    ..form_area
+                },
+                active,
+            );
         }
     }
 }

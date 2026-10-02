@@ -43,8 +43,12 @@ pub fn run(db: Db) -> Result<()> {
     result?;
     // Back up on the way out, after the terminal is restored so messages are visible.
     if let Some(b) = &app.business {
-        match backup::run(&app.db, &paths::expand_home(&b.output_dir), b.backups_to_keep) {
-            Ok(path) => println!("Backed up to {}", path.display()),
+        match backup::run(
+            &app.db,
+            &paths::expand_home(&b.output_dir),
+            b.backups_to_keep,
+        ) {
+            Ok(path) => println!("Backed up to {}", paths::display(&path)),
             Err(e) => eprintln!("warning: backup failed: {e:#}"),
         }
     }
@@ -75,13 +79,23 @@ impl Screen {
 
     /// Screens that capture typing, where global shortcuts are disabled.
     fn captures_text(&self) -> bool {
-        matches!(self, Screen::Wizard(_) | Screen::Editor(_) | Screen::Settings(_))
+        matches!(
+            self,
+            Screen::Wizard(_) | Screen::Editor(_) | Screen::Settings(_)
+        )
     }
 }
 
 pub(crate) enum Modal {
-    Form { title: String, form: Form, purpose: Purpose },
-    Confirm { message: String, action: Action },
+    Form {
+        title: String,
+        form: Form,
+        purpose: Purpose,
+    },
+    Confirm {
+        message: String,
+        action: Action,
+    },
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -179,7 +193,8 @@ impl App {
     /// The PDF renderer, created on first use (font loading takes a moment).
     pub fn renderer(&mut self) -> Result<&Renderer> {
         if self.renderer.is_none() {
-            self.renderer = Some(Renderer::new(&self.output_dir()).context("loading PDF template and fonts")?);
+            self.renderer =
+                Some(Renderer::new(&self.output_dir()).context("loading PDF template and fonts")?);
         }
         Ok(self.renderer.as_ref().expect("just set"))
     }
@@ -202,7 +217,10 @@ impl App {
     }
 
     pub fn confirm(&mut self, message: impl Into<String>, action: Action) {
-        self.modal = Some(Modal::Confirm { message: message.into(), action });
+        self.modal = Some(Modal::Confirm {
+            message: message.into(),
+            action,
+        });
     }
 
     pub fn go(&mut self, screen: Screen) {
@@ -306,8 +324,15 @@ impl App {
             Screen::Clients => self.draw_clients(f, body),
             Screen::Reports => self.draw_reports(f, body),
         }
-        let help = if self.modal.is_some() { self.modal_help() } else { self.help() };
-        f.render_widget(Paragraph::new(help_line(&help)), help_area.inner(ratatui::layout::Margin::new(1, 0)));
+        let help = if self.modal.is_some() {
+            self.modal_help()
+        } else {
+            self.help()
+        };
+        f.render_widget(
+            Paragraph::new(help_line(&help)),
+            help_area.inner(ratatui::layout::Margin::new(1, 0)),
+        );
         self.draw_status(f, status_area.inner(ratatui::layout::Margin::new(1, 0)));
         if self.modal.is_some() {
             self.draw_modal(f);
@@ -315,14 +340,28 @@ impl App {
     }
 
     fn draw_tabs(&self, f: &mut Frame, area: Rect) {
-        let [line, _] = Layout::vertical([Constraint::Length(1), Constraint::Length(1)]).areas(area);
-        let [brand, tabs] = Layout::horizontal([Constraint::Length(8), Constraint::Min(1)]).areas(line);
-        f.render_widget(Paragraph::new(Span::styled(" tally", theme::title())), brand);
+        let [line, _] =
+            Layout::vertical([Constraint::Length(1), Constraint::Length(1)]).areas(area);
+        let [brand, tabs] =
+            Layout::horizontal([Constraint::Length(8), Constraint::Min(1)]).areas(line);
+        f.render_widget(
+            Paragraph::new(Span::styled(" tally", theme::title())),
+            brand,
+        );
         if matches!(self.screen, Screen::Wizard(_)) {
-            f.render_widget(Paragraph::new(Span::styled("First-time setup", theme::bold())), tabs);
+            f.render_widget(
+                Paragraph::new(Span::styled("First-time setup", theme::bold())),
+                tabs,
+            );
             return;
         }
-        let titles = ["1 Dashboard", "2 Invoices", "3 Clients", "4 Reports", "5 Settings"];
+        let titles = [
+            "1 Dashboard",
+            "2 Invoices",
+            "3 Clients",
+            "4 Reports",
+            "5 Settings",
+        ];
         f.render_widget(
             Tabs::new(titles)
                 .select(self.screen.tab())
@@ -350,7 +389,12 @@ impl App {
 
     fn help(&self) -> Vec<(&'static str, &'static str)> {
         let mut keys = match &self.screen {
-            Screen::Wizard(_) => vec![("↑↓/Tab", "move"), ("Enter", "next"), ("Ctrl+S", "save"), ("Esc", "quit")],
+            Screen::Wizard(_) => vec![
+                ("↑↓/Tab", "move"),
+                ("Enter", "next"),
+                ("Ctrl+S", "save"),
+                ("Esc", "quit"),
+            ],
             Screen::Settings(_) => vec![
                 ("↑↓/Tab", "move"),
                 ("Ctrl+S", "save"),
@@ -398,10 +442,26 @@ pub(crate) fn help_line(keys: &[(&str, &str)]) -> Line<'static> {
     Line::from(spans)
 }
 
+/// A table header: text columns left-aligned, then numeric columns right-aligned.
+pub(crate) fn numeric_header(
+    text: &[&'static str],
+    numeric: &[&'static str],
+) -> ratatui::widgets::Row<'static> {
+    let cells = text
+        .iter()
+        .map(|t| Line::from(*t))
+        .chain(numeric.iter().map(|t| Line::from(*t).right_aligned()));
+    ratatui::widgets::Row::new(cells.collect::<Vec<_>>()).style(theme::header_row())
+}
+
 /// A centred rectangle for popups.
 pub(crate) fn centered(area: Rect, width: u16, height: u16) -> Rect {
-    let [h] = Layout::horizontal([Constraint::Length(width.min(area.width))]).flex(Flex::Center).areas(area);
-    let [v] = Layout::vertical([Constraint::Length(height.min(area.height))]).flex(Flex::Center).areas(h);
+    let [h] = Layout::horizontal([Constraint::Length(width.min(area.width))])
+        .flex(Flex::Center)
+        .areas(area);
+    let [v] = Layout::vertical([Constraint::Length(height.min(area.height))])
+        .flex(Flex::Center)
+        .areas(h);
     v
 }
 

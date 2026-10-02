@@ -56,20 +56,41 @@ impl Editor {
 
     pub fn edit(invoice: Invoice, business: &Business, clients: &[Client]) -> Self {
         // Archived clients are hidden unless this invoice already uses one.
-        let choices: Vec<&Client> =
-            clients.iter().filter(|c| !c.archived || c.id == invoice.client_id).collect();
+        let choices: Vec<&Client> = clients
+            .iter()
+            .filter(|c| !c.archived || c.id == invoice.client_id)
+            .collect();
         let client_ids: Vec<i64> = choices.iter().map(|c| c.id).collect();
-        let selected = client_ids.iter().position(|id| *id == invoice.client_id).unwrap_or(0);
+        let selected = client_ids
+            .iter()
+            .position(|id| *id == invoice.client_id)
+            .unwrap_or(0);
         let terms = business.payment_terms_days;
         let header = Form::new()
-            .choice("client", "Client", choices.iter().map(|c| c.name.clone()).collect(), selected)
+            .choice(
+                "client",
+                "Client",
+                choices.iter().map(|c| c.name.clone()).collect(),
+                selected,
+            )
             .text("issue", "Invoice date", invoice.issue_date.to_string())
             .required()
             .hint("YYYY-MM-DD or DD/MM/YYYY")
-            .text("supply_start", "Supply date / from", invoice.supply_start.to_string())
+            .text(
+                "supply_start",
+                "Supply date / from",
+                invoice.supply_start.to_string(),
+            )
             .required()
             .hint("When the work was done (required on UK invoices). Fill 'Supply to' for a period")
-            .text("supply_end", "Supply to", invoice.supply_end.map(|d| d.to_string()).unwrap_or_default())
+            .text(
+                "supply_end",
+                "Supply to",
+                invoice
+                    .supply_end
+                    .map(|d| d.to_string())
+                    .unwrap_or_default(),
+            )
             .hint("Optional end of the supply period, e.g. the last day of the month")
             .text("due", "Due date", invoice.due_date.to_string())
             .required()
@@ -79,7 +100,8 @@ impl Editor {
             .embedded();
         Editor {
             due_follows_issue: invoice.due_date == invoice.issue_date + Days::new(terms.into()),
-            supply_follows_issue: invoice.supply_start == invoice.issue_date && invoice.supply_end.is_none(),
+            supply_follows_issue: invoice.supply_start == invoice.issue_date
+                && invoice.supply_end.is_none(),
             invoice,
             header,
             client_ids,
@@ -95,7 +117,10 @@ impl Editor {
     }
 
     pub fn client_id(&self) -> i64 {
-        self.client_ids.get(self.header.selected("client")).copied().unwrap_or_default()
+        self.client_ids
+            .get(self.header.selected("client"))
+            .copied()
+            .unwrap_or_default()
     }
 
     pub fn help(&self) -> Vec<(&'static str, &'static str)> {
@@ -110,7 +135,12 @@ impl Editor {
                 ("Esc", "close"),
             ]
         } else {
-            vec![("↑↓/Tab", "move"), ("↓ past notes", "lines"), ("Ctrl+S", "save"), ("Esc", "close")]
+            vec![
+                ("↑↓/Tab", "move"),
+                ("↓ past notes", "lines"),
+                ("Ctrl+S", "save"),
+                ("Esc", "close"),
+            ]
         }
     }
 
@@ -119,7 +149,9 @@ impl Editor {
         let parse = |form: &Form, key: &'static str| -> Result<NaiveDate, (String, &'static str)> {
             dates::parse_date(&form.value(key)).map_err(|e| (e, key))
         };
-        self.header.check_required().map_err(|e| (e, self.header.focused_key()))?;
+        self.header
+            .check_required()
+            .map_err(|e| (e, self.header.focused_key()))?;
         self.invoice.client_id = self.client_id();
         self.invoice.issue_date = parse(&self.header, "issue")?;
         self.invoice.supply_start = parse(&self.header, "supply_start")?;
@@ -130,12 +162,18 @@ impl Editor {
         self.invoice.due_date = parse(&self.header, "due")?;
         self.invoice.notes = self.header.value("notes");
         if self.invoice.due_date < self.invoice.issue_date {
-            return Err(("The due date can't be before the invoice date".into(), "due"));
+            return Err((
+                "The due date can't be before the invoice date".into(),
+                "due",
+            ));
         }
         if let Some(end) = self.invoice.supply_end
             && end < self.invoice.supply_start
         {
-            return Err(("'Supply to' is before 'Supply date / from'".into(), "supply_end"));
+            return Err((
+                "'Supply to' is before 'Supply date / from'".into(),
+                "supply_end",
+            ));
         }
         Ok(())
     }
@@ -147,7 +185,8 @@ impl Editor {
             "issue" => {
                 if let Ok(issue) = dates::parse_date(&self.header.value("issue")) {
                     if self.due_follows_issue {
-                        self.header.set_value("due", (issue + Days::new(self.terms.into())).to_string());
+                        self.header
+                            .set_value("due", (issue + Days::new(self.terms.into())).to_string());
                     }
                     if self.supply_follows_issue {
                         self.header.set_value("supply_start", issue.to_string());
@@ -172,7 +211,9 @@ impl App {
     /// Validates and saves the draft, then shows it.
     pub(super) fn save_editor(&mut self) -> Result<()> {
         // Match the field directly so `self.db` can be borrowed alongside it.
-        let Screen::Editor(e) = &mut self.screen else { return Ok(()) };
+        let Screen::Editor(e) = &mut self.screen else {
+            return Ok(());
+        };
         if let Err((msg, key)) = e.apply_header() {
             e.in_lines = false;
             e.header.fail(key, msg);
@@ -217,7 +258,9 @@ impl App {
         if ctrl && key.code == KeyCode::Char('s') {
             return self.save_editor();
         }
-        let Some(e) = self.editor() else { return Ok(()) };
+        let Some(e) = self.editor() else {
+            return Ok(());
+        };
         if key.code == KeyCode::Esc {
             if e.dirty {
                 self.confirm("Discard your changes to this draft?", Action::DiscardEditor);
@@ -285,9 +328,20 @@ impl App {
     pub(super) fn draw_editor(&mut self, f: &mut Frame, area: Rect) {
         let modal_open = self.modal.is_some();
         let Some(e) = self.editor() else { return };
-        let title = if e.is_new() { "New invoice (draft)".to_string() } else { format!("Edit draft #{}", e.invoice.id) };
+        let title = if e.is_new() {
+            "New invoice (draft)".to_string()
+        } else {
+            format!("Edit draft #{}", e.invoice.id)
+        };
         let dirty = if e.dirty { "  • unsaved" } else { "" };
-        let [title_area, _, header_area, lines_title, lines_area, total_area] = Layout::vertical([
+        let [
+            title_area,
+            _,
+            header_area,
+            lines_title,
+            lines_area,
+            total_area,
+        ] = Layout::vertical([
             Constraint::Length(1),
             Constraint::Length(1),
             Constraint::Length(e.header.height()),
@@ -297,29 +351,58 @@ impl App {
         ])
         .areas(area);
         f.render_widget(
-            Paragraph::new(Line::from(vec![Span::styled(title, theme::title()), Span::styled(dirty, theme::warning())])),
+            Paragraph::new(Line::from(vec![
+                Span::styled(title, theme::title()),
+                Span::styled(dirty, theme::warning()),
+            ])),
             title_area,
         );
         let header_width = header_area.width.min(100);
-        e.header.render(f, Rect { width: header_width, ..header_area }, !e.in_lines && !modal_open);
+        e.header.render(
+            f,
+            Rect {
+                width: header_width,
+                ..header_area
+            },
+            !e.in_lines && !modal_open,
+        );
 
-        let lines_heading = if e.in_lines { theme::title() } else { theme::muted() };
-        f.render_widget(Paragraph::new(Line::styled("Lines", lines_heading)), lines_title);
+        let lines_heading = if e.in_lines {
+            theme::title()
+        } else {
+            theme::muted()
+        };
+        f.render_widget(
+            Paragraph::new(Line::styled("Lines", lines_heading)),
+            lines_title,
+        );
         if e.invoice.lines.is_empty() {
-            let msg = if e.in_lines { "No lines yet. Press a to add one." } else { "No lines yet. Move down here and press a." };
-            f.render_widget(Paragraph::new(Line::styled(msg, theme::muted())), lines_area);
+            let msg = if e.in_lines {
+                "No lines yet. Press a to add one."
+            } else {
+                "No lines yet. Move down here and press a."
+            };
+            f.render_widget(
+                Paragraph::new(Line::styled(msg, theme::muted())),
+                lines_area,
+            );
         } else {
             let rows = e.invoice.lines.iter().map(|l| {
                 let unit = l.kind.unit(l.quantity);
                 Row::new(vec![
                     Line::from(l.kind.label()),
                     Line::from(l.description.clone()),
-                    Line::from(format!("{} {unit}", l.quantity)).right_aligned(),
+                    Line::from(format!("{} {unit}", l.quantity).trim_end().to_string())
+                        .right_aligned(),
                     Line::from(l.unit_price.to_string()).right_aligned(),
                     Line::from(l.amount().to_string()).right_aligned(),
                 ])
             });
-            let highlight = if e.in_lines && !modal_open { theme::selected_row() } else { ratatui::style::Style::new() };
+            let highlight = if e.in_lines && !modal_open {
+                theme::selected_row()
+            } else {
+                ratatui::style::Style::new()
+            };
             clamp_selection(&mut e.lines, e.invoice.lines.len());
             f.render_stateful_widget(
                 Table::new(
@@ -332,7 +415,10 @@ impl App {
                         Constraint::Length(12),
                     ],
                 )
-                .header(Row::new(["Type", "Description", "Qty", "Rate", "Amount"]).style(theme::header_row()))
+                .header(super::numeric_header(
+                    &["Type", "Description"],
+                    &["Qty", "Rate", "Amount"],
+                ))
                 .column_spacing(2)
                 .row_highlight_style(highlight),
                 lines_area,
@@ -351,7 +437,12 @@ impl App {
 
     fn open_line_form(&mut self, index: Option<usize>, client_id: i64) {
         let client = self.clients.iter().find(|c| c.id == client_id).cloned();
-        let existing = index.and_then(|i| self.editor().and_then(|e| e.invoice.lines.get(i).cloned()));
-        self.modal = Some(super::modals::line_form(index, existing.as_ref(), client.as_ref()));
+        let existing =
+            index.and_then(|i| self.editor().and_then(|e| e.invoice.lines.get(i).cloned()));
+        self.modal = Some(super::modals::line_form(
+            index,
+            existing.as_ref(),
+            client.as_ref(),
+        ));
     }
 }

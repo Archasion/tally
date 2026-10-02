@@ -63,7 +63,14 @@ mod tests {
             .map(|e| e.unwrap().file_name().into_string().unwrap())
             .collect();
         left.sort();
-        assert_eq!(left, ["notes.txt", "tally-20260102-000000.db", "tally-20260103-000000.db"]);
+        assert_eq!(
+            left,
+            [
+                "notes.txt",
+                "tally-20260102-000000.db",
+                "tally-20260103-000000.db"
+            ]
+        );
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

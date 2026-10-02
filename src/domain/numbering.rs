@@ -85,7 +85,10 @@ impl NumberPattern {
         }
         match seq_count {
             0 => Err("Pattern must contain {SEQ} or {SEQ:n}".into()),
-            1 => Ok(NumberPattern { source: source.to_string(), tokens }),
+            1 => Ok(NumberPattern {
+                source: source.to_string(),
+                tokens,
+            }),
             _ => Err("Pattern must contain {SEQ} only once".into()),
         }
     }

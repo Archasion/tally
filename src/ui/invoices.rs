@@ -28,7 +28,13 @@ pub enum Filter {
 }
 
 impl Filter {
-    const ALL: [Filter; 5] = [Filter::All, Filter::Outstanding, Filter::Overdue, Filter::Drafts, Filter::Settled];
+    const ALL: [Filter; 5] = [
+        Filter::All,
+        Filter::Outstanding,
+        Filter::Overdue,
+        Filter::Drafts,
+        Filter::Settled,
+    ];
 
     fn label(self) -> &'static str {
         match self {
@@ -57,11 +63,24 @@ impl Filter {
 }
 
 pub(super) fn invoice_table(rows: &[&InvoiceRow], today: NaiveDate) -> Table<'static> {
-    let header = Row::new(["Number", "Client", "Issued", "Due", "Total", "Balance", "Status"]).style(theme::header_row());
+    let header = Row::new(vec![
+        Line::from("Number"),
+        Line::from("Client"),
+        Line::from("Issued"),
+        Line::from("Due"),
+        Line::from("Total").right_aligned(),
+        Line::from("Balance").right_aligned(),
+        Line::from("Status"),
+    ])
+    .style(theme::header_row());
     let body = rows.iter().map(|r| {
         let inv = &r.invoice;
         let due = if r.status == Status::Overdue {
-            format!("{} ({}d late)", dates::short(inv.due_date), r.days_overdue(today))
+            format!(
+                "{} ({}d late)",
+                dates::short(inv.due_date),
+                r.days_overdue(today)
+            )
         } else {
             dates::short(inv.due_date)
         };
@@ -71,7 +90,12 @@ pub(super) fn invoice_table(rows: &[&InvoiceRow], today: NaiveDate) -> Table<'st
             Line::from(dates::short(inv.issue_date)),
             Line::from(due),
             Line::from(r.totals.total.to_string()).right_aligned(),
-            Line::from(if inv.is_draft() { String::new() } else { r.balance().to_string() }).right_aligned(),
+            Line::from(if inv.is_draft() {
+                String::new()
+            } else {
+                r.balance().to_string()
+            })
+            .right_aligned(),
             Line::styled(r.status.label(), theme::status(r.status)),
         ])
     });
@@ -121,21 +145,45 @@ impl Detail {
             bail!("invoice {id} no longer exists");
         };
         let mut entries: Vec<Entry> = Vec::new();
-        entries.extend(app.db.transactions(TxKind::Payment, Some(id))?.into_iter().map(Entry::Payment));
-        entries.extend(app.db.transactions(TxKind::Refund, Some(id))?.into_iter().map(Entry::Refund));
-        entries.extend(app.db.credit_notes(Some(id))?.into_iter().map(|c| Entry::Credit(Box::new(c))));
+        entries.extend(
+            app.db
+                .transactions(TxKind::Payment, Some(id))?
+                .into_iter()
+                .map(Entry::Payment),
+        );
+        entries.extend(
+            app.db
+                .transactions(TxKind::Refund, Some(id))?
+                .into_iter()
+                .map(Entry::Refund),
+        );
+        entries.extend(
+            app.db
+                .credit_notes(Some(id))?
+                .into_iter()
+                .map(|c| Entry::Credit(Box::new(c))),
+        );
         entries.sort_by_key(Entry::date);
-        let pdf = (!row.invoice.is_draft()).then(|| paths::invoice_pdf(&app.output_dir(), &row.invoice));
+        let pdf =
+            (!row.invoice.is_draft()).then(|| paths::invoice_pdf(&app.output_dir(), &row.invoice));
         let selected = app.detail.as_ref().and_then(|d| d.sel.selected());
         let mut sel = TableState::default().with_selected(selected.or(Some(0)));
         clamp_selection(&mut sel, entries.len());
-        Ok(Detail { row, entries, sel, pdf })
+        Ok(Detail {
+            row,
+            entries,
+            sel,
+            pdf,
+        })
     }
 }
 
 impl App {
     fn filtered(&self) -> Vec<&InvoiceRow> {
-        self.rows.iter().filter(|r| self.invoice_filter.matches(r.status)).collect()
+        self.rows
+            .iter()
+            .filter(|r| self.invoice_filter.matches(r.status))
+            .collect()
     }
 
     /// Opens the editor on a new draft, optionally for a given client.
@@ -154,7 +202,10 @@ impl App {
         if list_nav(&mut self.invoice_table, ids.len(), key.code) {
             return Ok(());
         }
-        let selected = self.invoice_table.selected().and_then(|i| ids.get(i).copied());
+        let selected = self
+            .invoice_table
+            .selected()
+            .and_then(|i| ids.get(i).copied());
         match key.code {
             KeyCode::Char('f') | KeyCode::Tab => {
                 self.invoice_filter = self.invoice_filter.next();
@@ -182,14 +233,22 @@ impl App {
     }
 
     pub(super) fn draw_invoices(&mut self, f: &mut Frame, area: Rect) {
-        let [filter_area, _, table_area] =
-            Layout::vertical([Constraint::Length(1), Constraint::Length(1), Constraint::Min(3)]).areas(area);
+        let [filter_area, _, table_area] = Layout::vertical([
+            Constraint::Length(1),
+            Constraint::Length(1),
+            Constraint::Min(3),
+        ])
+        .areas(area);
         let mut spans = vec![Span::styled("Show: ", theme::muted())];
         for (i, filter) in Filter::ALL.iter().enumerate() {
             if i > 0 {
                 spans.push(Span::styled(" · ", theme::muted()));
             }
-            let count = self.rows.iter().filter(|r| filter.matches(r.status)).count();
+            let count = self
+                .rows
+                .iter()
+                .filter(|r| filter.matches(r.status))
+                .count();
             let text = format!("{} ({count})", filter.label());
             spans.push(if *filter == self.invoice_filter {
                 Span::styled(text, theme::title())
@@ -200,13 +259,27 @@ impl App {
         f.render_widget(Paragraph::new(Line::from(spans)), filter_area);
 
         let today = dates::today();
-        let rows: Vec<&InvoiceRow> = self.rows.iter().filter(|r| self.invoice_filter.matches(r.status)).collect();
+        let rows: Vec<&InvoiceRow> = self
+            .rows
+            .iter()
+            .filter(|r| self.invoice_filter.matches(r.status))
+            .collect();
         if rows.is_empty() {
-            f.render_widget(Paragraph::new(Line::styled("Nothing here. Press n for a new invoice.", theme::muted())), table_area);
+            f.render_widget(
+                Paragraph::new(Line::styled(
+                    "Nothing here. Press n for a new invoice.",
+                    theme::muted(),
+                )),
+                table_area,
+            );
             return;
         }
         clamp_selection(&mut self.invoice_table, rows.len());
-        f.render_stateful_widget(invoice_table(&rows, today), table_area, &mut self.invoice_table);
+        f.render_stateful_widget(
+            invoice_table(&rows, today),
+            table_area,
+            &mut self.invoice_table,
+        );
     }
 
     // ----- detail ---------------------------------------------------------
@@ -216,7 +289,11 @@ impl App {
         self.refresh()?;
         let inv = self.db.invoice(new_id)?;
         let business = self.db.require_business()?;
-        self.go(Screen::Editor(Box::new(Editor::edit(inv, &business, &self.clients))));
+        self.go(Screen::Editor(Box::new(Editor::edit(
+            inv,
+            &business,
+            &self.clients,
+        ))));
         self.success("Duplicated into a new draft. Check the dates and lines, then Ctrl+S.");
         Ok(())
     }
@@ -232,7 +309,11 @@ impl App {
             Ok(())
         })?;
         self.refresh()?;
-        self.success(format!("Issued {} → {}", inv.display_number(), written.display()));
+        self.success(format!(
+            "Issued {} → {}",
+            inv.display_number(),
+            paths::display(&written)
+        ));
         Ok(())
     }
 
@@ -251,7 +332,10 @@ impl App {
         let path = paths::invoice_pdf(&self.output_dir(), &inv);
         if !path.exists() {
             self.regenerate(id)?;
-            self.info(format!("The PDF was missing, so it was recreated at {}", path.display()));
+            self.info(format!(
+                "The PDF was missing, so it was recreated at {}",
+                paths::display(&path)
+            ));
         }
         open_path(&path)
     }
@@ -262,15 +346,26 @@ impl App {
             let inv = self.db.invoice(note.invoice_id)?;
             let out = self.output_dir();
             self.renderer()?.write_credit_note(&out, note, &inv)?;
-            self.info(format!("The PDF was missing, so it was recreated at {}", path.display()));
+            self.info(format!(
+                "The PDF was missing, so it was recreated at {}",
+                paths::display(&path)
+            ));
         }
         open_path(&path)
     }
 
     pub(super) fn detail_help(&self) -> Vec<(&'static str, &'static str)> {
-        let Some(d) = &self.detail else { return vec![("Esc", "back")] };
+        let Some(d) = &self.detail else {
+            return vec![("Esc", "back")];
+        };
         if d.row.invoice.is_draft() {
-            return vec![("e", "edit"), ("i", "issue"), ("u", "duplicate"), ("x", "delete draft"), ("Esc", "back")];
+            return vec![
+                ("e", "edit"),
+                ("i", "issue"),
+                ("u", "duplicate"),
+                ("x", "delete draft"),
+                ("Esc", "back"),
+            ];
         }
         let mut keys = vec![("p", "payment"), ("s", "sent")];
         if d.row.balance().is_negative() {
@@ -279,9 +374,11 @@ impl App {
         if d.row.totals.creditable().is_positive() {
             keys.push(("c", "credit note"));
         }
-        keys.extend([("o", "open PDF"), ("R", "regenerate PDF"), ("u", "duplicate")]);
-        if !d.entries.is_empty() {
-            keys.extend([("↑↓", "select"), ("Enter", "open CN"), ("X", "delete payment")]);
+        keys.extend([("o", "PDF"), ("R", "regenerate"), ("u", "duplicate")]);
+        match d.sel.selected().and_then(|i| d.entries.get(i)) {
+            Some(Entry::Credit(_)) => keys.push(("Enter", "open credit note")),
+            Some(_) => keys.push(("X", "delete entry")),
+            None => {}
         }
         keys.push(("Esc", "back"));
         keys
@@ -318,7 +415,11 @@ impl App {
             KeyCode::Char('e') | KeyCode::Char('E') if is_draft => {
                 let inv = self.db.invoice(id)?;
                 let business = self.db.require_business()?;
-                self.go(Screen::Editor(Box::new(Editor::edit(inv, &business, &self.clients))));
+                self.go(Screen::Editor(Box::new(Editor::edit(
+                    inv,
+                    &business,
+                    &self.clients,
+                ))));
             }
             KeyCode::Char('i') if is_draft => {
                 let inv = self.db.invoice(id)?;
@@ -333,14 +434,25 @@ impl App {
                     Action::Issue(id),
                 );
             }
-            KeyCode::Char('x') if is_draft => self.confirm("Delete this draft? This can't be undone.", Action::DeleteDraft(id)),
-            // Issued
-            KeyCode::Char('p') if !is_draft => {
-                self.open_form(Purpose::Payment(id), Some(balance.max(crate::domain::Money::ZERO)))
+            KeyCode::Char('e') | KeyCode::Char('x') if !is_draft => {
+                bail!(
+                    "{number} is issued and locked. To correct it, raise a credit note (c) and issue a new invoice (u duplicates it)."
+                )
             }
+            KeyCode::Char('x') if is_draft => self.confirm(
+                "Delete this draft? This can't be undone.",
+                Action::DeleteDraft(id),
+            ),
+            // Issued
+            KeyCode::Char('p') if !is_draft => self.open_form(
+                Purpose::Payment(id),
+                Some(balance.max(crate::domain::Money::ZERO)),
+            ),
             KeyCode::Char('r') if !is_draft => {
                 if !balance.is_negative() {
-                    bail!("Nothing is owed back on {number}. Refunds settle overpayments or credit notes on paid invoices.");
+                    bail!(
+                        "Nothing is owed back on {number}. Refunds settle overpayments or credit notes on paid invoices."
+                    );
                 }
                 self.open_form(Purpose::Refund(id), Some(-balance));
             }
@@ -370,9 +482,17 @@ impl App {
             }
             KeyCode::Char('X') => {
                 if let Some((kind, t)) = selected_tx {
-                    let what = if kind == TxKind::Payment { "payment" } else { "refund" };
+                    let what = if kind == TxKind::Payment {
+                        "payment"
+                    } else {
+                        "refund"
+                    };
                     self.confirm(
-                        format!("Delete the {what} of {} on {}? Only do this for a mistaken entry.", t.amount, dates::short(t.date)),
+                        format!(
+                            "Delete the {what} of {} on {}? Only do this for a mistaken entry.",
+                            t.amount,
+                            dates::short(t.date)
+                        ),
                         Action::DeleteTx(kind, t.id),
                     );
                 } else if selected_cn.is_some() {
@@ -390,15 +510,31 @@ impl App {
         let today = dates::today();
 
         let mut info = vec![Line::from(vec![
-            Span::styled(if inv.is_draft() { "Draft invoice".to_string() } else { format!("Invoice {}", inv.display_number()) }, theme::title()),
+            Span::styled(
+                if inv.is_draft() {
+                    format!("Draft #{}", inv.id)
+                } else {
+                    format!("Invoice {}", inv.display_number())
+                },
+                theme::title(),
+            ),
             Span::raw("  "),
             Span::styled(d.row.status.label(), theme::status(d.row.status)),
         ])];
-        let kv = |k: &str, v: String| Line::from(vec![Span::styled(format!("{k:<14}"), theme::muted()), Span::raw(v)]);
+        let kv = |k: &str, v: String| {
+            Line::from(vec![
+                Span::styled(format!("{k:<14}"), theme::muted()),
+                Span::raw(v),
+            ])
+        };
         info.push(kv("Client", d.row.client_name.clone()));
         info.push(kv("Invoice date", dates::long(inv.issue_date)));
         info.push(kv(
-            if inv.supply_end.is_some() { "Supply period" } else { "Supply date" },
+            if inv.supply_end.is_some() {
+                "Supply period"
+            } else {
+                "Supply date"
+            },
             dates::supply_period(inv.supply_start, inv.supply_end),
         ));
         let mut due = dates::long(inv.due_date);
@@ -407,18 +543,35 @@ impl App {
         }
         info.push(kv("Due date", due));
         if !inv.is_draft() {
-            info.push(kv("Sent", inv.sent_on.map(dates::long).unwrap_or_else(|| "not marked as sent".into())));
+            info.push(kv(
+                "Sent",
+                inv.sent_on
+                    .map(dates::long)
+                    .unwrap_or_else(|| "not marked as sent".into()),
+            ));
         }
         if let Some(pdf) = &d.pdf {
-            let exists = if pdf.exists() { "" } else { "  (missing — o recreates it)" };
-            info.push(kv("PDF", format!("{}{exists}", pdf.display())));
+            let exists = if pdf.exists() {
+                ""
+            } else {
+                "  (missing — o recreates it)"
+            };
+            info.push(kv("PDF", format!("{}{exists}", paths::display(pdf))));
         }
         if !inv.notes.is_empty() {
             info.push(kv("Notes", inv.notes.clone()));
         }
 
         let lines_height = inv.lines.len() as u16 + 1;
-        let [info_area, _, lines_area, totals_area, _, ledger_title, ledger_area] = Layout::vertical([
+        let [
+            info_area,
+            _,
+            lines_area,
+            totals_area,
+            _,
+            ledger_title,
+            ledger_area,
+        ] = Layout::vertical([
             Constraint::Length(info.len() as u16),
             Constraint::Length(1),
             Constraint::Length(lines_height.max(2)),
@@ -434,47 +587,76 @@ impl App {
             let unit = l.kind.unit(l.quantity);
             Row::new(vec![
                 Line::from(l.description.clone()),
-                Line::from(format!("{} {unit}", l.quantity)).right_aligned(),
+                Line::from(format!("{} {unit}", l.quantity).trim_end().to_string()).right_aligned(),
                 Line::from(l.unit_price.to_string()).right_aligned(),
                 Line::from(l.amount().to_string()).right_aligned(),
             ])
         });
         f.render_widget(
-            Table::new(line_rows, [Constraint::Fill(1), Constraint::Length(12), Constraint::Length(12), Constraint::Length(12)])
-                .header(Row::new(["Description", "Qty", "Rate", "Amount"]).style(theme::header_row()))
-                .column_spacing(2),
+            Table::new(
+                line_rows,
+                [
+                    Constraint::Fill(1),
+                    Constraint::Length(12),
+                    Constraint::Length(12),
+                    Constraint::Length(12),
+                ],
+            )
+            .header(super::numeric_header(
+                &["Description"],
+                &["Qty", "Rate", "Amount"],
+            ))
+            .column_spacing(2),
             lines_area,
         );
 
         let t = d.row.totals;
-        let mut totals = vec![Line::from(vec![Span::styled("Total     ", theme::muted()), Span::styled(t.total.to_string(), theme::bold())])];
+        // Fixed-width label/value pairs so the amounts line up when right-aligned.
+        let total_line = |label: &str, value: crate::domain::Money, style| {
+            Line::from(vec![
+                Span::styled(format!("{label:<10}"), theme::muted()),
+                Span::styled(format!("{:>12}", value.to_string()), style),
+            ])
+        };
+        let plain = ratatui::style::Style::new();
+        let mut totals = vec![total_line("Total", t.total, theme::bold())];
         if !inv.is_draft() {
-            totals.push(Line::from(vec![Span::styled("Paid      ", theme::muted()), Span::raw(t.paid.to_string())]));
+            totals.push(total_line("Paid", t.paid, plain));
             if !t.credited.is_zero() {
-                totals.push(Line::from(vec![Span::styled("Credited  ", theme::muted()), Span::raw(t.credited.to_string())]));
+                totals.push(total_line("Credited", t.credited, plain));
             }
             if !t.refunded.is_zero() {
-                totals.push(Line::from(vec![Span::styled("Refunded  ", theme::muted()), Span::raw(t.refunded.to_string())]));
+                totals.push(total_line("Refunded", t.refunded, plain));
             }
             let balance = t.balance();
-            let (label, style) = if balance.is_negative() {
-                ("Owed back ", theme::warning())
+            totals.push(if balance.is_negative() {
+                total_line("Owed back", -balance, theme::warning())
             } else if balance.is_zero() {
-                ("Balance   ", theme::success())
+                total_line("Balance", balance, theme::success())
             } else {
-                ("Balance   ", theme::bold())
-            };
-            let value = if balance.is_negative() { (-balance).to_string() } else { balance.to_string() };
-            totals.push(Line::from(vec![Span::styled(label, theme::muted()), Span::styled(value, style)]));
+                total_line("Balance", balance, theme::bold())
+            });
         }
         f.render_widget(Paragraph::new(totals).right_aligned(), totals_area);
 
         if inv.is_draft() {
             return;
         }
-        f.render_widget(Paragraph::new(Line::styled("Payments, refunds & credit notes", theme::title())), ledger_title);
+        f.render_widget(
+            Paragraph::new(Line::styled(
+                "Payments, refunds & credit notes",
+                theme::title(),
+            )),
+            ledger_title,
+        );
         if d.entries.is_empty() {
-            f.render_widget(Paragraph::new(Line::styled("None yet. Press p to record a payment.", theme::muted())), ledger_area);
+            f.render_widget(
+                Paragraph::new(Line::styled(
+                    "None yet. Press p to record a payment.",
+                    theme::muted(),
+                )),
+                ledger_area,
+            );
             return;
         }
         let rows = d.entries.iter().map(|e| match e {
@@ -492,15 +674,26 @@ impl App {
             ]),
             Entry::Credit(c) => Row::new(vec![
                 Line::from(dates::short(c.date)),
-                Line::styled(format!("Credit {}", c.number), theme::status(Status::Credited)),
+                Line::styled(
+                    format!("Credit {}", c.number),
+                    theme::status(Status::Credited),
+                ),
                 Line::from((-c.total()).to_string()).right_aligned(),
                 Line::from(c.reason.clone()),
             ]),
         });
         f.render_stateful_widget(
-            Table::new(rows, [Constraint::Length(11), Constraint::Length(18), Constraint::Length(12), Constraint::Fill(1)])
-                .column_spacing(2)
-                .row_highlight_style(theme::selected_row()),
+            Table::new(
+                rows,
+                [
+                    Constraint::Length(11),
+                    Constraint::Length(18),
+                    Constraint::Length(12),
+                    Constraint::Fill(1),
+                ],
+            )
+            .column_spacing(2)
+            .row_highlight_style(theme::selected_row()),
             ledger_area,
             &mut d.sel,
         );
@@ -508,5 +701,10 @@ impl App {
 }
 
 fn join_nonempty(parts: &[&str]) -> String {
-    parts.iter().filter(|p| !p.is_empty()).copied().collect::<Vec<_>>().join(" · ")
+    parts
+        .iter()
+        .filter(|p| !p.is_empty())
+        .copied()
+        .collect::<Vec<_>>()
+        .join(" · ")
 }

@@ -33,7 +33,11 @@ impl InvoiceRow {
 }
 
 pub fn invoice_rows(db: &Db, today: NaiveDate) -> Result<Vec<InvoiceRow>> {
-    let names: HashMap<i64, String> = db.clients(true)?.into_iter().map(|c| (c.id, c.name)).collect();
+    let names: HashMap<i64, String> = db
+        .clients(true)?
+        .into_iter()
+        .map(|c| (c.id, c.name))
+        .collect();
     db.invoices()?
         .into_iter()
         .map(|invoice| {
@@ -46,7 +50,12 @@ pub fn invoice_rows(db: &Db, today: NaiveDate) -> Result<Vec<InvoiceRow>> {
                 .map(|s| s.client.name.clone())
                 .or_else(|| names.get(&invoice.client_id).cloned())
                 .unwrap_or_else(|| "?".into());
-            Ok(InvoiceRow { invoice, client_name, totals, status })
+            Ok(InvoiceRow {
+                invoice,
+                client_name,
+                totals,
+                status,
+            })
         })
         .collect()
 }
@@ -60,8 +69,12 @@ pub enum AgingBucket {
 }
 
 impl AgingBucket {
-    pub const ALL: [AgingBucket; 4] =
-        [AgingBucket::NotYetDue, AgingBucket::Days1To30, AgingBucket::Days31To60, AgingBucket::Over60];
+    pub const ALL: [AgingBucket; 4] = [
+        AgingBucket::NotYetDue,
+        AgingBucket::Days1To30,
+        AgingBucket::Days31To60,
+        AgingBucket::Over60,
+    ];
 
     pub fn of(days_overdue: i64) -> Self {
         match days_overdue {
@@ -92,19 +105,29 @@ pub struct AgingReport {
 }
 
 pub fn aging(rows: &[InvoiceRow], today: NaiveDate) -> AgingReport {
-    let mut outstanding: Vec<InvoiceRow> =
-        rows.iter().filter(|r| r.status.is_outstanding()).cloned().collect();
+    let mut outstanding: Vec<InvoiceRow> = rows
+        .iter()
+        .filter(|r| r.status.is_outstanding())
+        .cloned()
+        .collect();
     outstanding.sort_by_key(|r| r.invoice.due_date);
     let buckets = AgingBucket::ALL
         .into_iter()
         .map(|b| {
-            let in_bucket = outstanding.iter().filter(|r| AgingBucket::of(r.days_overdue(today)) == b);
-            let (sum, count) = in_bucket.fold((Money::ZERO, 0), |(s, c), r| (s + r.balance(), c + 1));
+            let in_bucket = outstanding
+                .iter()
+                .filter(|r| AgingBucket::of(r.days_overdue(today)) == b);
+            let (sum, count) =
+                in_bucket.fold((Money::ZERO, 0), |(s, c), r| (s + r.balance(), c + 1));
             (b, sum, count)
         })
         .collect();
     let total = outstanding.iter().map(InvoiceRow::balance).sum();
-    AgingReport { buckets, rows: outstanding, total }
+    AgingReport {
+        buckets,
+        rows: outstanding,
+        total,
+    }
 }
 
 /// Cash-basis income for one tax year: money received minus refunds paid,
@@ -144,7 +167,12 @@ fn income_from(year: TaxYear, payments: &[Transaction], refunds: &[Transaction])
         let label = if month_start.day() == 1 && end.day() < 28 {
             format!("{} (1–{})", month_start.format("%b %Y"), end.day())
         } else if month_start.day() != 1 {
-            format!("{} ({}–{})", month_start.format("%b %Y"), month_start.day(), end.day())
+            format!(
+                "{} ({}–{})",
+                month_start.format("%b %Y"),
+                month_start.day(),
+                end.day()
+            )
         } else {
             month_start.format("%b %Y").to_string()
         };
@@ -161,7 +189,11 @@ fn income_from(year: TaxYear, payments: &[Transaction], refunds: &[Transaction])
 }
 
 fn first_of_next_month(d: NaiveDate) -> NaiveDate {
-    let (y, m) = if d.month() == 12 { (d.year() + 1, 1) } else { (d.year(), d.month() + 1) };
+    let (y, m) = if d.month() == 12 {
+        (d.year() + 1, 1)
+    } else {
+        (d.year(), d.month() + 1)
+    };
     NaiveDate::from_ymd_opt(y, m, 1).expect("valid date")
 }
 
@@ -172,13 +204,26 @@ pub fn export_csv(db: &Db, output_dir: &Path, today: NaiveDate) -> Result<PathBu
     let dir = paths::exports_dir(output_dir).join(Local::now().format("%Y%m%d-%H%M%S").to_string());
     std::fs::create_dir_all(&dir).with_context(|| format!("creating {}", dir.display()))?;
     let rows = invoice_rows(db, today)?;
-    let numbers: HashMap<i64, String> =
-        rows.iter().map(|r| (r.invoice.id, r.invoice.display_number())).collect();
+    let numbers: HashMap<i64, String> = rows
+        .iter()
+        .map(|r| (r.invoice.id, r.invoice.display_number()))
+        .collect();
 
     let mut w = csv::Writer::from_path(dir.join("invoices.csv"))?;
     w.write_record([
-        "number", "status", "client", "issue_date", "supply_start", "supply_end", "due_date", "sent_on",
-        "total", "paid", "credited", "refunded", "balance",
+        "number",
+        "status",
+        "client",
+        "issue_date",
+        "supply_start",
+        "supply_end",
+        "due_date",
+        "sent_on",
+        "total",
+        "paid",
+        "credited",
+        "refunded",
+        "balance",
     ])?;
     for r in &rows {
         let i = &r.invoice;
@@ -200,9 +245,19 @@ pub fn export_csv(db: &Db, output_dir: &Path, today: NaiveDate) -> Result<PathBu
     }
     w.flush()?;
 
-    for (kind, file) in [(TxKind::Payment, "payments.csv"), (TxKind::Refund, "refunds.csv")] {
+    for (kind, file) in [
+        (TxKind::Payment, "payments.csv"),
+        (TxKind::Refund, "refunds.csv"),
+    ] {
         let mut w = csv::Writer::from_path(dir.join(file))?;
-        w.write_record(["date", "tax_year", "invoice", "amount", "method", "reference"])?;
+        w.write_record([
+            "date",
+            "tax_year",
+            "invoice",
+            "amount",
+            "method",
+            "reference",
+        ])?;
         for t in db.transactions(kind, None)? {
             w.write_record([
                 t.date.to_string(),
@@ -285,7 +340,12 @@ mod tests {
 
     #[test]
     fn income_respects_tax_year_boundaries() {
-        let payments = [tx(2026, 4, 5, 100), tx(2026, 4, 6, 1_000), tx(2027, 4, 5, 2_000), tx(2027, 4, 6, 5)];
+        let payments = [
+            tx(2026, 4, 5, 100),
+            tx(2026, 4, 6, 1_000),
+            tx(2027, 4, 5, 2_000),
+            tx(2027, 4, 6, 5),
+        ];
         let refunds = [tx(2026, 12, 1, 300)];
         let r = income_from(TaxYear(2026), &payments, &refunds);
         assert_eq!(r.received, Money::from_pence(3_000));

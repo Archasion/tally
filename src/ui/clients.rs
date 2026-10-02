@@ -11,7 +11,10 @@ use crate::domain::{Client, LineKind, Money};
 
 impl App {
     fn visible_clients(&self) -> Vec<&Client> {
-        self.clients.iter().filter(|c| self.show_archived || !c.archived).collect()
+        self.clients
+            .iter()
+            .filter(|c| self.show_archived || !c.archived)
+            .collect()
     }
 
     pub(super) fn select_client(&mut self, id: i64) {
@@ -24,7 +27,10 @@ impl App {
         if list_nav(&mut self.client_table, ids.len(), key.code) {
             return Ok(());
         }
-        let selected = self.client_table.selected().and_then(|i| ids.get(i).copied());
+        let selected = self
+            .client_table
+            .selected()
+            .and_then(|i| ids.get(i).copied());
         match key.code {
             KeyCode::Char('n') => self.open_form(Purpose::NewClient, None),
             KeyCode::Enter | KeyCode::Char('e') => {
@@ -41,7 +47,10 @@ impl App {
                 }
             }
             KeyCode::Char('a') => {
-                if let Some(client) = selected.and_then(|id| self.clients.iter().find(|c| c.id == id)).cloned() {
+                if let Some(client) = selected
+                    .and_then(|id| self.clients.iter().find(|c| c.id == id))
+                    .cloned()
+                {
                     self.db.set_client_archived(client.id, !client.archived)?;
                     self.refresh()?;
                     self.success(if client.archived {
@@ -61,8 +70,12 @@ impl App {
     }
 
     pub(super) fn draw_clients(&mut self, f: &mut Frame, area: Rect) {
-        let [title_area, _, table_area] =
-            Layout::vertical([Constraint::Length(1), Constraint::Length(1), Constraint::Min(3)]).areas(area);
+        let [title_area, _, table_area] = Layout::vertical([
+            Constraint::Length(1),
+            Constraint::Length(1),
+            Constraint::Min(3),
+        ])
+        .areas(area);
         let archived = self.clients.iter().filter(|c| c.archived).count();
         let mut title = vec![Span::styled("Clients", theme::title())];
         if archived > 0 {
@@ -85,7 +98,13 @@ impl App {
         };
         let clients = self.visible_clients();
         if clients.is_empty() {
-            f.render_widget(Paragraph::new(Line::styled("No clients yet. Press n to add one.", theme::muted())), table_area);
+            f.render_widget(
+                Paragraph::new(Line::styled(
+                    "No clients yet. Press n to add one.",
+                    theme::muted(),
+                )),
+                table_area,
+            );
             return;
         }
         let rows: Vec<Row> = clients
@@ -105,13 +124,22 @@ impl App {
                     (false, _) => "Individual",
                 };
                 let owed = owed(c.id);
-                let name_style = if c.archived { theme::muted() } else { ratatui::style::Style::new() };
+                let name_style = if c.archived {
+                    theme::muted()
+                } else {
+                    ratatui::style::Style::new()
+                };
                 Row::new(vec![
                     Line::styled(c.name.clone(), name_style),
                     Line::from(c.address.town.clone()),
                     Line::from(kind),
                     Line::from(rate).right_aligned(),
-                    Line::from(if owed.is_zero() { String::new() } else { owed.to_string() }).right_aligned(),
+                    Line::from(if owed.is_zero() {
+                        String::new()
+                    } else {
+                        owed.to_string()
+                    })
+                    .right_aligned(),
                 ])
             })
             .collect();
@@ -126,7 +154,10 @@ impl App {
                 Constraint::Length(12),
             ],
         )
-        .header(Row::new(["Name", "Town", "Type", "Default rate", "Owed"]).style(theme::header_row()))
+        .header(super::numeric_header(
+            &["Name", "Town", "Type"],
+            &["Default rate", "Owed"],
+        ))
         .column_spacing(2)
         .row_highlight_style(theme::selected_row());
         clamp_selection(&mut self.client_table, len);

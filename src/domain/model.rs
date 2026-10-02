@@ -67,7 +67,9 @@ impl LineKind {
     }
 
     pub fn parse(s: &str) -> Option<Self> {
-        Self::ALL.into_iter().find(|k| k.as_str().eq_ignore_ascii_case(s))
+        Self::ALL
+            .into_iter()
+            .find(|k| k.as_str().eq_ignore_ascii_case(s))
     }
 
     pub fn label(self) -> &'static str {
@@ -178,7 +180,9 @@ impl Invoice {
     }
 
     pub fn display_number(&self) -> String {
-        self.number.clone().unwrap_or_else(|| format!("draft #{}", self.id))
+        self.number
+            .clone()
+            .unwrap_or_else(|| format!("draft #{}", self.id))
     }
 }
 
@@ -236,7 +240,10 @@ impl Status {
 
     /// Issued and money still owed.
     pub fn is_outstanding(self) -> bool {
-        matches!(self, Status::Issued | Status::Sent | Status::PartPaid | Status::Overdue)
+        matches!(
+            self,
+            Status::Issued | Status::Sent | Status::PartPaid | Status::Overdue
+        )
     }
 }
 
@@ -326,18 +333,48 @@ mod tests {
     fn status_progression() {
         let before_due = d(2026, 10, 15);
         let after_due = d(2026, 11, 1);
-        assert_eq!(totals(1000, 0, 0, 0).status(&invoice(false, false), after_due), Status::Draft);
-        assert_eq!(totals(1000, 0, 0, 0).status(&invoice(true, false), before_due), Status::Issued);
-        assert_eq!(totals(1000, 0, 0, 0).status(&invoice(true, true), before_due), Status::Sent);
-        assert_eq!(totals(1000, 400, 0, 0).status(&invoice(true, true), before_due), Status::PartPaid);
-        assert_eq!(totals(1000, 400, 0, 0).status(&invoice(true, true), after_due), Status::Overdue);
+        assert_eq!(
+            totals(1000, 0, 0, 0).status(&invoice(false, false), after_due),
+            Status::Draft
+        );
+        assert_eq!(
+            totals(1000, 0, 0, 0).status(&invoice(true, false), before_due),
+            Status::Issued
+        );
+        assert_eq!(
+            totals(1000, 0, 0, 0).status(&invoice(true, true), before_due),
+            Status::Sent
+        );
+        assert_eq!(
+            totals(1000, 400, 0, 0).status(&invoice(true, true), before_due),
+            Status::PartPaid
+        );
+        assert_eq!(
+            totals(1000, 400, 0, 0).status(&invoice(true, true), after_due),
+            Status::Overdue
+        );
         // Overdue counts from the due date even if never marked sent.
-        assert_eq!(totals(1000, 0, 0, 0).status(&invoice(true, false), after_due), Status::Overdue);
-        assert_eq!(totals(1000, 1000, 0, 0).status(&invoice(true, true), after_due), Status::Paid);
-        assert_eq!(totals(1000, 600, 400, 0).status(&invoice(true, true), after_due), Status::Paid);
-        assert_eq!(totals(1000, 0, 1000, 0).status(&invoice(true, true), after_due), Status::Credited);
+        assert_eq!(
+            totals(1000, 0, 0, 0).status(&invoice(true, false), after_due),
+            Status::Overdue
+        );
+        assert_eq!(
+            totals(1000, 1000, 0, 0).status(&invoice(true, true), after_due),
+            Status::Paid
+        );
+        assert_eq!(
+            totals(1000, 600, 400, 0).status(&invoice(true, true), after_due),
+            Status::Paid
+        );
+        assert_eq!(
+            totals(1000, 0, 1000, 0).status(&invoice(true, true), after_due),
+            Status::Credited
+        );
         // Due today is not overdue.
-        assert_eq!(totals(1000, 0, 0, 0).status(&invoice(true, true), d(2026, 10, 31)), Status::Sent);
+        assert_eq!(
+            totals(1000, 0, 0, 0).status(&invoice(true, true), d(2026, 10, 31)),
+            Status::Sent
+        );
     }
 
     #[test]

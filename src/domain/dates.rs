@@ -17,11 +17,17 @@ pub fn parse_date(input: &str) -> Result<NaiveDate, String> {
     }
     // Pick the year format by digit count: chrono's %Y would read `26` as year 26.
     let two_digit_year = s.rsplit('/').next().is_some_and(|y| y.len() == 2);
-    let fmt = if two_digit_year { "%d/%m/%y" } else { "%d/%m/%Y" };
+    let fmt = if two_digit_year {
+        "%d/%m/%y"
+    } else {
+        "%d/%m/%Y"
+    };
     if let Ok(d) = NaiveDate::parse_from_str(s, fmt) {
         return Ok(d);
     }
-    Err(format!("'{s}' is not a date (use YYYY-MM-DD or DD/MM/YYYY)"))
+    Err(format!(
+        "'{s}' is not a date (use YYYY-MM-DD or DD/MM/YYYY)"
+    ))
 }
 
 /// `2 October 2026`
@@ -125,7 +131,10 @@ mod tests {
     #[test]
     fn formats_supply_periods() {
         assert_eq!(supply_period(d(2026, 10, 2), None), "2 October 2026");
-        assert_eq!(supply_period(d(2026, 10, 1), Some(d(2026, 10, 31))), "1–31 October 2026");
+        assert_eq!(
+            supply_period(d(2026, 10, 1), Some(d(2026, 10, 31))),
+            "1–31 October 2026"
+        );
         assert_eq!(
             supply_period(d(2026, 9, 15), Some(d(2026, 10, 14))),
             "15 September–14 October 2026"

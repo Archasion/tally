@@ -53,7 +53,12 @@ pub struct Form {
 
 impl Form {
     pub fn new() -> Self {
-        Form { fields: Vec::new(), focus: 0, error: None, wraps: true }
+        Form {
+            fields: Vec::new(),
+            focus: 0,
+            error: None,
+            wraps: true,
+        }
     }
 
     pub fn embedded(mut self) -> Self {
@@ -81,7 +86,13 @@ impl Form {
         f
     }
 
-    pub fn choice(self, key: &'static str, label: &str, options: Vec<String>, selected: usize) -> Self {
+    pub fn choice(
+        self,
+        key: &'static str,
+        label: &str,
+        options: Vec<String>,
+        selected: usize,
+    ) -> Self {
         let selected = selected.min(options.len().saturating_sub(1));
         let mut f = self.push(key, label, FieldKind::Choice(options));
         f.fields.last_mut().expect("just pushed").choice = selected;
@@ -146,11 +157,9 @@ impl Form {
 
     /// Returns the first empty required field as an error, focusing it.
     pub fn check_required(&mut self) -> Result<(), String> {
-        if let Some(i) = self
-            .fields
-            .iter()
-            .position(|f| f.required && matches!(f.kind, FieldKind::Text) && f.input.value().trim().is_empty())
-        {
+        if let Some(i) = self.fields.iter().position(|f| {
+            f.required && matches!(f.kind, FieldKind::Text) && f.input.value().trim().is_empty()
+        }) {
             self.focus = i;
             return Err(format!("{} is required", self.fields[i].label));
         }
@@ -209,7 +218,11 @@ impl Form {
                 Outcome::Changed
             }
             FieldKind::Toggle => match key.code {
-                KeyCode::Left | KeyCode::Right | KeyCode::Char(' ') | KeyCode::Char('y') | KeyCode::Char('n') => {
+                KeyCode::Left
+                | KeyCode::Right
+                | KeyCode::Char(' ')
+                | KeyCode::Char('y')
+                | KeyCode::Char('n') => {
                     field.toggle = match key.code {
                         KeyCode::Char('y') => true,
                         KeyCode::Char('n') => false,
@@ -243,14 +256,35 @@ impl Form {
     }
 
     pub fn render(&self, frame: &mut Frame, area: Rect, active: bool) {
-        let [fields_area, _, hint_area] =
-            Layout::vertical([Constraint::Min(1), Constraint::Length(1), Constraint::Length(1)]).areas(area);
-        let label_width = self.fields.iter().map(|f| f.label.chars().count()).max().unwrap_or(0) as u16 + 2;
+        let [fields_area, _, hint_area] = Layout::vertical([
+            Constraint::Min(1),
+            Constraint::Length(1),
+            Constraint::Length(1),
+        ])
+        .areas(area);
+        let label_width = self
+            .fields
+            .iter()
+            .map(|f| f.label.chars().count())
+            .max()
+            .unwrap_or(0) as u16
+            + 2;
         let visible = fields_area.height as usize;
         // Scroll so the focused field is always visible.
-        let start = if self.focus >= visible { self.focus + 1 - visible } else { 0 };
+        let start = if self.focus >= visible {
+            self.focus + 1 - visible
+        } else {
+            0
+        };
 
-        for (row, (i, field)) in self.fields.iter().enumerate().skip(start).take(visible).enumerate() {
+        for (row, (i, field)) in self
+            .fields
+            .iter()
+            .enumerate()
+            .skip(start)
+            .take(visible)
+            .enumerate()
+        {
             let y = fields_area.y + row as u16;
             let focused = active && i == self.focus;
             let label_area = Rect::new(fields_area.x, y, label_width.min(fields_area.width), 1);
@@ -261,7 +295,11 @@ impl Form {
                 1,
             );
             let marker = if field.required { "*" } else { " " };
-            let label_style = if focused { theme::focused_label() } else { theme::label() };
+            let label_style = if focused {
+                theme::focused_label()
+            } else {
+                theme::label()
+            };
             frame.render_widget(
                 Paragraph::new(Line::from(vec![
                     Span::styled(field.label.clone(), label_style),
@@ -269,23 +307,36 @@ impl Form {
                 ])),
                 label_area,
             );
-            let value_style = if focused { theme::focused_value() } else { theme::value() };
+            let value_style = if focused {
+                theme::focused_value()
+            } else {
+                theme::value()
+            };
             match &field.kind {
                 FieldKind::Text => {
                     let width = value_area.width.max(1) as usize;
                     let scroll = field.input.visual_scroll(width.saturating_sub(1));
                     frame.render_widget(
-                        Paragraph::new(field.input.value()).style(value_style).scroll((0, scroll as u16)),
+                        Paragraph::new(field.input.value())
+                            .style(value_style)
+                            .scroll((0, scroll as u16)),
                         value_area,
                     );
                     if focused {
                         let x = field.input.visual_cursor().saturating_sub(scroll) as u16;
-                        frame.set_cursor_position((value_area.x + x.min(value_area.width.saturating_sub(1)), y));
+                        frame.set_cursor_position((
+                            value_area.x + x.min(value_area.width.saturating_sub(1)),
+                            y,
+                        ));
                     }
                 }
                 FieldKind::Choice(options) => {
                     let current = options.get(field.choice).cloned().unwrap_or_default();
-                    let text = if focused { format!("◀ {current} ▶") } else { current };
+                    let text = if focused {
+                        format!("◀ {current} ▶")
+                    } else {
+                        current
+                    };
                     frame.render_widget(Paragraph::new(text).style(value_style), value_area);
                 }
                 FieldKind::Toggle => {
@@ -335,7 +386,12 @@ mod tests {
 
     #[test]
     fn typing_navigation_and_submit() {
-        let mut f = Form::new().text("a", "A", "").required().choice("b", "B", vec!["x".into(), "y".into()], 0);
+        let mut f = Form::new().text("a", "A", "").required().choice(
+            "b",
+            "B",
+            vec!["x".into(), "y".into()],
+            0,
+        );
         f.handle_key(key(KeyCode::Char('h')));
         f.handle_key(key(KeyCode::Char('i')));
         assert_eq!(f.value("a"), "hi");
@@ -350,7 +406,10 @@ mod tests {
 
     #[test]
     fn required_fields_are_checked() {
-        let mut f = Form::new().text("a", "Name", "").required().text("b", "Other", "x");
+        let mut f = Form::new()
+            .text("a", "Name", "")
+            .required()
+            .text("b", "Other", "x");
         f.focus = 1;
         assert_eq!(f.check_required().unwrap_err(), "Name is required");
         assert_eq!(f.focus, 0);

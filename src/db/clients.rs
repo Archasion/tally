@@ -74,8 +74,10 @@ impl Db {
     }
 
     pub fn set_client_archived(&self, id: i64, archived: bool) -> Result<()> {
-        self.conn
-            .execute("UPDATE clients SET archived = ?2 WHERE id = ?1", params![id, archived])?;
+        self.conn.execute(
+            "UPDATE clients SET archived = ?2 WHERE id = ?1",
+            params![id, archived],
+        )?;
         Ok(())
     }
 }
@@ -102,7 +104,9 @@ fn client_from_row(r: &Row) -> rusqlite::Result<Client> {
         },
         is_business: r.get("is_business")?,
         late_payment_notice: r.get("late_payment_notice")?,
-        default_rate: r.get::<_, Option<i64>>("default_rate_pence")?.map(Money::from_pence),
+        default_rate: r
+            .get::<_, Option<i64>>("default_rate_pence")?
+            .map(Money::from_pence),
         default_rate_kind: LineKind::parse(&kind).unwrap_or(LineKind::Hours),
         archived: r.get("archived")?,
     })

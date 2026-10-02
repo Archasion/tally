@@ -46,7 +46,9 @@ impl Db {
     }
 
     fn migrate(&mut self) -> Result<()> {
-        let version: i64 = self.conn.pragma_query_value(None, "user_version", |r| r.get(0))?;
+        let version: i64 = self
+            .conn
+            .pragma_query_value(None, "user_version", |r| r.get(0))?;
         let version = usize::try_from(version).unwrap_or(0);
         if version > MIGRATIONS.len() {
             bail!(
@@ -56,7 +58,8 @@ impl Db {
         }
         for (i, sql) in MIGRATIONS.iter().enumerate().skip(version) {
             let tx = self.conn.transaction()?;
-            tx.execute_batch(sql).with_context(|| format!("applying migration {}", i + 1))?;
+            tx.execute_batch(sql)
+                .with_context(|| format!("applying migration {}", i + 1))?;
             tx.pragma_update(None, "user_version", (i + 1) as i64)?;
             tx.commit()?;
         }
@@ -77,7 +80,8 @@ impl Db {
     }
 
     pub fn require_business(&self) -> Result<Business> {
-        self.business()?.context("business details have not been set up yet")
+        self.business()?
+            .context("business details have not been set up yet")
     }
 
     pub fn save_business(&self, b: &Business) -> Result<()> {
@@ -256,7 +260,10 @@ mod tests {
     fn migrations_are_idempotent() {
         let mut db = Db::open_in_memory().unwrap();
         db.migrate().unwrap();
-        let v: i64 = db.conn.pragma_query_value(None, "user_version", |r| r.get(0)).unwrap();
+        let v: i64 = db
+            .conn
+            .pragma_query_value(None, "user_version", |r| r.get(0))
+            .unwrap();
         assert_eq!(v as usize, MIGRATIONS.len());
     }
 

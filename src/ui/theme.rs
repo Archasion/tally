@@ -38,7 +38,9 @@ pub fn selected_row() -> Style {
 }
 
 pub fn header_row() -> Style {
-    Style::new().fg(Color::DarkGray).add_modifier(Modifier::BOLD)
+    Style::new()
+        .fg(Color::DarkGray)
+        .add_modifier(Modifier::BOLD)
 }
 
 pub fn bold() -> Style {

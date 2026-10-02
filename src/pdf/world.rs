@@ -18,7 +18,11 @@ use typst_pdf::PdfOptions;
 pub fn embedded_fonts() -> Vec<Font> {
     static FONTS: OnceLock<Vec<Font>> = OnceLock::new();
     FONTS
-        .get_or_init(|| typst_assets::fonts().flat_map(|data| Font::iter(Bytes::new(data))).collect())
+        .get_or_init(|| {
+            typst_assets::fonts()
+                .flat_map(|data| Font::iter(Bytes::new(data)))
+                .collect()
+        })
         .clone()
 }
 
@@ -27,7 +31,11 @@ pub fn fonts_from(data: Vec<u8>) -> Vec<Font> {
 }
 
 fn project_file(path: &str) -> FileId {
-    RootedPath::new(VirtualRoot::Project, VirtualPath::new(path).expect("valid virtual path")).intern()
+    RootedPath::new(
+        VirtualRoot::Project,
+        VirtualPath::new(path).expect("valid virtual path"),
+    )
+    .intern()
 }
 
 struct TallyWorld {
@@ -74,7 +82,11 @@ impl World for TallyWorld {
     }
 
     fn today(&self, _offset: Option<typst::foundations::Duration>) -> Option<Datetime> {
-        Datetime::from_ymd(self.today.year(), self.today.month() as u8, self.today.day() as u8)
+        Datetime::from_ymd(
+            self.today.year(),
+            self.today.month() as u8,
+            self.today.day() as u8,
+        )
     }
 }
 

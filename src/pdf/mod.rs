@@ -81,7 +81,10 @@ impl DocumentData {
         let number = inv.number.clone().unwrap_or_default();
         let b = &snap.business;
         let terms = match b.payment_terms_days {
-            0 => format!("Payment is due on receipt, by {}.", dates::long(inv.due_date)),
+            0 => format!(
+                "Payment is due on receipt, by {}.",
+                dates::long(inv.due_date)
+            ),
             n => format!(
                 "Payment is due within {n} days of the invoice date, by {}.",
                 dates::long(inv.due_date)
@@ -96,7 +99,10 @@ impl DocumentData {
             client: client_party(snap),
             meta: vec![
                 ("Invoice date".into(), dates::long(inv.issue_date)),
-                (supply_label(inv.supply_end.is_some()), dates::supply_period(inv.supply_start, inv.supply_end)),
+                (
+                    supply_label(inv.supply_end.is_some()),
+                    dates::supply_period(inv.supply_start, inv.supply_end),
+                ),
                 ("Due date".into(), dates::long(inv.due_date)),
             ],
             reason: String::new(),
@@ -126,7 +132,10 @@ impl DocumentData {
             client: client_party(snap),
             meta: vec![
                 ("Credit note date".into(), dates::long(note.date)),
-                ("Against invoice".into(), invoice.number.clone().unwrap_or_default()),
+                (
+                    "Against invoice".into(),
+                    invoice.number.clone().unwrap_or_default(),
+                ),
                 ("Invoice date".into(), dates::long(invoice.issue_date)),
                 (
                     supply_label(invoice.supply_end.is_some()),
@@ -145,7 +154,12 @@ impl DocumentData {
 }
 
 fn supply_label(is_period: bool) -> String {
-    if is_period { "Supply period" } else { "Supply date" }.into()
+    if is_period {
+        "Supply period"
+    } else {
+        "Supply date"
+    }
+    .into()
 }
 
 fn business_party(snap: &Snapshot) -> Party {
@@ -182,7 +196,11 @@ fn line_data(l: &LineItem) -> LineData {
     let unit = l.kind.unit(l.quantity);
     LineData {
         description: l.description.clone(),
-        quantity: if unit.is_empty() { l.quantity.to_string() } else { format!("{} {unit}", l.quantity) },
+        quantity: if unit.is_empty() {
+            l.quantity.to_string()
+        } else {
+            format!("{} {unit}", l.quantity)
+        },
         rate: match l.kind {
             crate::domain::LineKind::Hours => format!("{}/hr", l.unit_price),
             crate::domain::LineKind::Days => format!("{}/day", l.unit_price),
@@ -209,12 +227,15 @@ impl Renderer {
         if font_dir.is_dir() {
             for entry in std::fs::read_dir(&font_dir)? {
                 let path = entry?.path();
-                let is_font = path
-                    .extension()
-                    .and_then(|e| e.to_str())
-                    .is_some_and(|e| matches!(e.to_ascii_lowercase().as_str(), "ttf" | "otf" | "ttc" | "otc"));
+                let is_font = path.extension().and_then(|e| e.to_str()).is_some_and(|e| {
+                    matches!(
+                        e.to_ascii_lowercase().as_str(),
+                        "ttf" | "otf" | "ttc" | "otc"
+                    )
+                });
                 if is_font {
-                    let data = std::fs::read(&path).with_context(|| format!("reading {}", path.display()))?;
+                    let data = std::fs::read(&path)
+                        .with_context(|| format!("reading {}", path.display()))?;
                     fonts.extend(world::fonts_from(data));
                 }
             }
@@ -227,12 +248,20 @@ impl Renderer {
         } else {
             (BUILTIN_TEMPLATE.to_string(), false)
         };
-        Ok(Renderer { fonts, template, template_is_override })
+        Ok(Renderer {
+            fonts,
+            template,
+            template_is_override,
+        })
     }
 
     /// A renderer using only built-in fonts and the built-in template.
     pub fn builtin() -> Self {
-        Renderer { fonts: world::embedded_fonts(), template: BUILTIN_TEMPLATE.into(), template_is_override: false }
+        Renderer {
+            fonts: world::embedded_fonts(),
+            template: BUILTIN_TEMPLATE.into(),
+            template_is_override: false,
+        }
     }
 
     pub fn uses_template_override(&self) -> bool {
@@ -241,8 +270,16 @@ impl Renderer {
 
     pub fn render(&self, data: &DocumentData) -> Result<Vec<u8>> {
         let json = serde_json::to_vec(data)?;
-        world::compile_pdf(&self.template, json, &self.fonts)
-            .map_err(|e| anyhow!("{e}{}", if self.template_is_override { " (in your template.typ override)" } else { "" }))
+        world::compile_pdf(&self.template, json, &self.fonts).map_err(|e| {
+            anyhow!(
+                "{e}{}",
+                if self.template_is_override {
+                    " (in your template.typ override)"
+                } else {
+                    ""
+                }
+            )
+        })
     }
 
     /// Renders an issued invoice to `<output>/<year>/<number>_<client>.pdf`.
@@ -252,9 +289,17 @@ impl Renderer {
         Ok(path)
     }
 
-    pub fn write_credit_note(&self, output_dir: &Path, note: &CreditNote, invoice: &Invoice) -> Result<PathBuf> {
+    pub fn write_credit_note(
+        &self,
+        output_dir: &Path,
+        note: &CreditNote,
+        invoice: &Invoice,
+    ) -> Result<PathBuf> {
         let path = paths::credit_note_pdf(output_dir, note);
-        write_atomically(&path, &self.render(&DocumentData::for_credit_note(note, invoice))?)?;
+        write_atomically(
+            &path,
+            &self.render(&DocumentData::for_credit_note(note, invoice))?,
+        )?;
         Ok(path)
     }
 }
@@ -348,7 +393,9 @@ mod tests {
     #[test]
     fn renders_a_pdf_with_the_builtin_template() {
         let inv = sample_invoice();
-        let pdf = Renderer::builtin().render(&DocumentData::for_invoice(&inv).unwrap()).unwrap();
+        let pdf = Renderer::builtin()
+            .render(&DocumentData::for_invoice(&inv).unwrap())
+            .unwrap();
         assert!(pdf.starts_with(b"%PDF-"));
         assert!(pdf.len() > 1_000);
     }
@@ -367,21 +414,42 @@ mod tests {
         };
         let data = DocumentData::for_credit_note(&note, &inv);
         assert!(data.payment.is_none());
-        assert!(Renderer::builtin().render(&data).unwrap().starts_with(b"%PDF-"));
+        assert!(
+            Renderer::builtin()
+                .render(&data)
+                .unwrap()
+                .starts_with(b"%PDF-")
+        );
     }
 
     #[test]
     fn template_errors_are_reported() {
-        let r = Renderer { fonts: world::embedded_fonts(), template: "#let x = (".into(), template_is_override: true };
-        let err = r.render(&DocumentData::for_invoice(&sample_invoice()).unwrap()).unwrap_err();
+        let r = Renderer {
+            fonts: world::embedded_fonts(),
+            template: "#let x = (".into(),
+            template_is_override: true,
+        };
+        let err = r
+            .render(&DocumentData::for_invoice(&sample_invoice()).unwrap())
+            .unwrap_err();
         assert!(err.to_string().contains("template.typ"), "{err}");
     }
 
     #[test]
     fn late_payment_notice_only_for_flagged_business_clients() {
         let mut inv = sample_invoice();
-        assert!(!DocumentData::for_invoice(&inv).unwrap().late_payment_notice.is_empty());
+        assert!(
+            !DocumentData::for_invoice(&inv)
+                .unwrap()
+                .late_payment_notice
+                .is_empty()
+        );
         inv.snapshot.as_mut().unwrap().client.is_business = false;
-        assert!(DocumentData::for_invoice(&inv).unwrap().late_payment_notice.is_empty());
+        assert!(
+            DocumentData::for_invoice(&inv)
+                .unwrap()
+                .late_payment_notice
+                .is_empty()
+        );
     }
 }

@@ -7,7 +7,9 @@ use std::ops::{Add, AddAssign, Neg, Sub, SubAssign};
 use serde::{Deserialize, Serialize};
 
 /// An amount of money in pence (GBP).
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
+)]
 #[serde(transparent)]
 pub struct Money(i64);
 
@@ -177,7 +179,11 @@ fn parse_hundredths(s: &str) -> Option<i64> {
     {
         return None;
     }
-    let whole: i64 = if whole.is_empty() { 0 } else { whole.parse().ok()? };
+    let whole: i64 = if whole.is_empty() {
+        0
+    } else {
+        whole.parse().ok()?
+    };
     let frac: i64 = match frac.len() {
         0 => 0,
         1 => frac.parse::<i64>().ok()? * 10,
@@ -207,7 +213,10 @@ mod tests {
     fn parses_money() {
         assert_eq!(Money::parse("12").unwrap(), Money::from_pence(1200));
         assert_eq!(Money::parse("12.5").unwrap(), Money::from_pence(1250));
-        assert_eq!(Money::parse("£1,234.56").unwrap(), Money::from_pence(123_456));
+        assert_eq!(
+            Money::parse("£1,234.56").unwrap(),
+            Money::from_pence(123_456)
+        );
         assert_eq!(Money::parse(".5").unwrap(), Money::from_pence(50));
         assert_eq!(Money::parse("-3.20").unwrap(), Money::from_pence(-320));
         assert!(Money::parse("1.234").is_err());
@@ -239,12 +248,32 @@ mod tests {
     #[test]
     fn line_amounts_round_half_up_to_the_penny() {
         // 1.5 h × £45.00 = £67.50
-        assert_eq!(Quantity::from_hundredths(150).times(Money::from_pence(4500)).pence(), 6750);
+        assert_eq!(
+            Quantity::from_hundredths(150)
+                .times(Money::from_pence(4500))
+                .pence(),
+            6750
+        );
         // 0.33 × £0.50 = 16.5p → 17p
-        assert_eq!(Quantity::from_hundredths(33).times(Money::from_pence(50)).pence(), 17);
+        assert_eq!(
+            Quantity::from_hundredths(33)
+                .times(Money::from_pence(50))
+                .pence(),
+            17
+        );
         // 0.33 × £0.10 = 3.3p → 3p
-        assert_eq!(Quantity::from_hundredths(33).times(Money::from_pence(10)).pence(), 3);
+        assert_eq!(
+            Quantity::from_hundredths(33)
+                .times(Money::from_pence(10))
+                .pence(),
+            3
+        );
         // Negative prices round away from zero symmetrically.
-        assert_eq!(Quantity::from_hundredths(33).times(Money::from_pence(-50)).pence(), -17);
+        assert_eq!(
+            Quantity::from_hundredths(33)
+                .times(Money::from_pence(-50))
+                .pence(),
+            -17
+        );
     }
 }

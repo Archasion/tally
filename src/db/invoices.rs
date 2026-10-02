@@ -12,8 +12,9 @@ impl Db {
             "SELECT * FROM invoices
              ORDER BY issued_at IS NOT NULL, issue_date DESC, number DESC, id DESC",
         )?;
-        let mut invoices: Vec<Invoice> =
-            stmt.query_map([], invoice_from_row)?.collect::<rusqlite::Result<_>>()?;
+        let mut invoices: Vec<Invoice> = stmt
+            .query_map([], invoice_from_row)?
+            .collect::<rusqlite::Result<_>>()?;
         for inv in &mut invoices {
             inv.lines = load_lines(&self.conn, inv.id)?;
         }
@@ -23,7 +24,11 @@ impl Db {
     pub fn invoice(&self, id: i64) -> Result<Invoice> {
         let mut inv = self
             .conn
-            .query_row("SELECT * FROM invoices WHERE id = ?1", [id], invoice_from_row)
+            .query_row(
+                "SELECT * FROM invoices WHERE id = ?1",
+                [id],
+                invoice_from_row,
+            )
             .optional()?
             .with_context(|| format!("invoice {id} not found"))?;
         inv.lines = load_lines(&self.conn, id)?;
@@ -57,7 +62,11 @@ impl Db {
         validate_draft(inv)?;
         let tx = self.conn.unchecked_transaction()?;
         let issued: Option<Option<String>> = tx
-            .query_row("SELECT issued_at FROM invoices WHERE id = ?1", [inv.id], |r| r.get(0))
+            .query_row(
+                "SELECT issued_at FROM invoices WHERE id = ?1",
+                [inv.id],
+                |r| r.get(0),
+            )
             .optional()?;
         match issued {
             None => bail!("invoice {} not found", inv.id),
@@ -89,7 +98,8 @@ impl Db {
         if !inv.is_draft() {
             bail!("issued invoices cannot be deleted; raise a credit note instead");
         }
-        self.conn.execute("DELETE FROM invoices WHERE id = ?1", [id])?;
+        self.conn
+            .execute("DELETE FROM invoices WHERE id = ?1", [id])?;
         Ok(())
     }
 
@@ -115,7 +125,10 @@ impl Db {
         }
         let business = self.require_business()?;
         let client = self.client(inv.client_id)?;
-        let snapshot = Snapshot { business: business.clone(), client };
+        let snapshot = Snapshot {
+            business: business.clone(),
+            client,
+        };
 
         let tx = self.conn.unchecked_transaction()?;
         let number = Self::next_number(
@@ -143,8 +156,10 @@ impl Db {
         if inv.is_draft() {
             bail!("issue the invoice before marking it sent");
         }
-        self.conn
-            .execute("UPDATE invoices SET sent_on = ?2 WHERE id = ?1", params![id, sent_on])?;
+        self.conn.execute(
+            "UPDATE invoices SET sent_on = ?2 WHERE id = ?1",
+            params![id, sent_on],
+        )?;
         Ok(())
     }
 
@@ -314,9 +329,21 @@ pub(crate) mod tests {
         // Locked: no edits, no deletes, even bypassing the Rust checks.
         assert!(db.update_draft(&a).is_err());
         assert!(db.delete_draft(a.id).is_err());
-        assert!(db.connection().execute("DELETE FROM line_items WHERE invoice_id = ?1", [a.id]).is_err());
-        assert!(db.connection().execute("UPDATE invoices SET notes = 'x' WHERE id = ?1", [a.id]).is_err());
-        assert!(db.connection().execute("DELETE FROM invoices WHERE id = ?1", [a.id]).is_err());
+        assert!(
+            db.connection()
+                .execute("DELETE FROM line_items WHERE invoice_id = ?1", [a.id])
+                .is_err()
+        );
+        assert!(
+            db.connection()
+                .execute("UPDATE invoices SET notes = 'x' WHERE id = ?1", [a.id])
+                .is_err()
+        );
+        assert!(
+            db.connection()
+                .execute("DELETE FROM invoices WHERE id = ?1", [a.id])
+                .is_err()
+        );
         // ...but marking as sent is allowed.
         db.set_sent(a.id, Some(d(2026, 10, 2))).unwrap();
         assert_eq!(db.invoice(a.id).unwrap().sent_on, Some(d(2026, 10, 2)));
@@ -327,17 +354,38 @@ pub(crate) mod tests {
         let (db, client) = db_with_client();
         let a = db.create_draft(&draft(client, d(2026, 12, 31))).unwrap();
         let b = db.create_draft(&draft(client, d(2027, 1, 1))).unwrap();
-        assert_eq!(db.issue_invoice(a, now(), |_| Ok(())).unwrap().number.unwrap(), "2026-0001");
-        assert_eq!(db.issue_invoice(b, now(), |_| Ok(())).unwrap().number.unwrap(), "2027-0001");
+        assert_eq!(
+            db.issue_invoice(a, now(), |_| Ok(()))
+                .unwrap()
+                .number
+                .unwrap(),
+            "2026-0001"
+        );
+        assert_eq!(
+            db.issue_invoice(b, now(), |_| Ok(()))
+                .unwrap()
+                .number
+                .unwrap(),
+            "2027-0001"
+        );
     }
 
     #[test]
     fn failed_issue_rolls_back_and_does_not_consume_a_number() {
         let (db, client) = db_with_client();
         let a = db.create_draft(&draft(client, d(2026, 10, 2))).unwrap();
-        assert!(db.issue_invoice(a, now(), |_| anyhow::bail!("pdf failed")).is_err());
+        assert!(
+            db.issue_invoice(a, now(), |_| anyhow::bail!("pdf failed"))
+                .is_err()
+        );
         assert!(db.invoice(a).unwrap().is_draft());
-        assert_eq!(db.issue_invoice(a, now(), |_| Ok(())).unwrap().number.unwrap(), "2026-0001");
+        assert_eq!(
+            db.issue_invoice(a, now(), |_| Ok(()))
+                .unwrap()
+                .number
+                .unwrap(),
+            "2026-0001"
+        );
     }
 
     #[test]
@@ -349,9 +397,17 @@ pub(crate) mod tests {
         let a = db.create_draft(&draft(client, d(2026, 10, 2))).unwrap();
         db.issue_invoice(a, now(), |_| Ok(())).unwrap();
         // Simulate the counter being lost/reset: the next number must still be unique.
-        db.connection().execute("DELETE FROM sequences", []).unwrap();
+        db.connection()
+            .execute("DELETE FROM sequences", [])
+            .unwrap();
         let c = db.create_draft(&draft(client, d(2026, 10, 2))).unwrap();
-        assert_eq!(db.issue_invoice(c, now(), |_| Ok(())).unwrap().number.unwrap(), "INV-002");
+        assert_eq!(
+            db.issue_invoice(c, now(), |_| Ok(()))
+                .unwrap()
+                .number
+                .unwrap(),
+            "INV-002"
+        );
     }
 
     #[test]

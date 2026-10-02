@@ -48,7 +48,9 @@ impl App {
         let today = dates::today();
         let o = reports::overview(&self.rows);
         let year = reports::current_tax_year();
-        let income = reports::income(&self.db, year).map(|r| r.net()).unwrap_or_default();
+        let income = reports::income(&self.db, year)
+            .map(|r| r.net())
+            .unwrap_or_default();
 
         let [cards, _, table_title, table_area] = Layout::vertical([
             Constraint::Length(4),
@@ -58,17 +60,35 @@ impl App {
         ])
         .areas(area);
 
-        let card_areas = Layout::horizontal([Constraint::Fill(1); 4]).spacing(1).split(cards);
-        let overdue_style = if o.overdue_count > 0 { theme::error() } else { theme::bold() };
+        let card_areas = Layout::horizontal([Constraint::Fill(1); 4])
+            .spacing(1)
+            .split(cards);
+        let overdue_style = if o.overdue_count > 0 {
+            theme::error()
+        } else {
+            theme::bold()
+        };
         let card = |title: &str, value: String, sub: String, style| {
-            Paragraph::new(vec![Line::styled(value, style), Line::styled(sub, theme::muted())])
-                .block(Block::bordered().title(Span::styled(format!(" {title} "), theme::muted())).border_style(theme::muted()))
+            Paragraph::new(vec![
+                Line::styled(value, style),
+                Line::styled(sub, theme::muted()),
+            ])
+            .block(
+                Block::bordered()
+                    .title(Span::styled(format!(" {title} "), theme::muted()))
+                    .border_style(theme::muted())
+                    .padding(ratatui::widgets::Padding::horizontal(1)),
+            )
         };
         f.render_widget(
             card(
                 "Outstanding",
                 o.outstanding.to_string(),
-                format!("{} invoice{}", o.outstanding_count, plural(o.outstanding_count)),
+                format!(
+                    "{} invoice{}",
+                    o.outstanding_count,
+                    plural(o.outstanding_count)
+                ),
                 theme::bold(),
             ),
             card_areas[0],
@@ -83,28 +103,56 @@ impl App {
             card_areas[1],
         );
         f.render_widget(
-            card(&format!("Income {}", year.label()), income.to_string(), "received, cash basis".into(), theme::bold()),
+            card(
+                &format!("Income {}", year.label()),
+                income.to_string(),
+                "received, cash basis".into(),
+                theme::bold(),
+            ),
             card_areas[2],
         );
         let (drafts_value, drafts_sub, style) = if o.refunds_owed.is_positive() {
-            (o.refunds_owed.to_string(), "refunds owed to clients".to_string(), theme::warning())
+            (
+                o.refunds_owed.to_string(),
+                "refunds owed to clients".to_string(),
+                theme::warning(),
+            )
         } else {
-            (o.drafts.to_string(), format!("draft{}", plural(o.drafts)), theme::bold())
+            (
+                o.drafts.to_string(),
+                format!("draft{}", plural(o.drafts)),
+                theme::bold(),
+            )
         };
         f.render_widget(
-            card(if o.refunds_owed.is_positive() { "Refunds due" } else { "Drafts" }, drafts_value, drafts_sub, style),
+            card(
+                if o.refunds_owed.is_positive() {
+                    "Refunds due"
+                } else {
+                    "Drafts"
+                },
+                drafts_value,
+                drafts_sub,
+                style,
+            ),
             card_areas[3],
         );
 
         let recent = recent(&self.rows);
-        f.render_widget(Paragraph::new(Line::styled("Needs attention & recent", theme::title())), table_title);
+        f.render_widget(
+            Paragraph::new(Line::styled("Needs attention & recent", theme::title())),
+            table_title,
+        );
         if recent.is_empty() {
             let msg = if self.clients.is_empty() {
                 "No invoices yet. Press 3 to add a client, then n to create an invoice."
             } else {
                 "No invoices yet. Press n to create one."
             };
-            f.render_widget(Paragraph::new(Line::styled(msg, theme::muted())), table_area);
+            f.render_widget(
+                Paragraph::new(Line::styled(msg, theme::muted())),
+                table_area,
+            );
             return;
         }
         super::clamp_selection(&mut self.dash_table, recent.len());

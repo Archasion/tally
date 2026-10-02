@@ -41,27 +41,44 @@ fn run() -> Result<()> {
         }
         Some("backup") => {
             let db = Db::open(&paths::database_path()?)?;
-            let business = db.require_business().context("run `tally` once to set up first")?;
-            let path = backup::run(&db, &paths::expand_home(&business.output_dir), business.backups_to_keep)?;
+            let business = db
+                .require_business()
+                .context("run `tally` once to set up first")?;
+            let path = backup::run(
+                &db,
+                &paths::expand_home(&business.output_dir),
+                business.backups_to_keep,
+            )?;
             println!("Backed up to {}", path.display());
             Ok(())
         }
         Some("sample-pdf") => {
-            let out = PathBuf::from(args.get(1).map(String::as_str).unwrap_or("sample-invoice.pdf"));
+            let out = PathBuf::from(
+                args.get(1)
+                    .map(String::as_str)
+                    .unwrap_or("sample-invoice.pdf"),
+            );
             let renderer = match Db::open(&paths::database_path()?)?.business()? {
                 Some(b) => Renderer::new(&paths::expand_home(&b.output_dir))?,
                 None => Renderer::builtin(),
             };
             let pdf = renderer.render(&DocumentData::for_invoice(&sample_invoice())?)?;
             std::fs::write(&out, pdf).with_context(|| format!("writing {}", out.display()))?;
-            let source = if renderer.uses_template_override() { "your template override" } else { "the built-in template" };
+            let source = if renderer.uses_template_override() {
+                "your template override"
+            } else {
+                "the built-in template"
+            };
             println!("Wrote {} using {source}", out.display());
             Ok(())
         }
         Some("where") => {
             println!("Database:      {}", paths::database_path()?.display());
             match Db::open(&paths::database_path()?)?.business()? {
-                Some(b) => println!("Output folder: {}", paths::expand_home(&b.output_dir).display()),
+                Some(b) => println!(
+                    "Output folder: {}",
+                    paths::expand_home(&b.output_dir).display()
+                ),
                 None => println!("Output folder: (not set up yet — run `tally`)"),
             }
             Ok(())

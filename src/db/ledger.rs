@@ -7,7 +7,9 @@ use rusqlite::{Row, params};
 
 use super::invoices::{insert_lines, number_taken};
 use super::{Db, json_column, line_from_row};
-use crate::domain::{CreditNote, Invoice, LineItem, Money, Snapshot, Totals, Transaction, lines_total};
+use crate::domain::{
+    CreditNote, Invoice, LineItem, Money, Snapshot, Totals, Transaction, lines_total,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TxKind {
@@ -67,7 +69,13 @@ impl Db {
         );
         self.conn.execute(
             &sql,
-            params![t.invoice_id, t.date, t.amount.pence(), t.method.trim(), t.reference.trim()],
+            params![
+                t.invoice_id,
+                t.date,
+                t.amount.pence(),
+                t.method.trim(),
+                t.reference.trim()
+            ],
         )?;
         Ok(self.conn.last_insert_rowid())
     }
@@ -83,13 +91,16 @@ impl Db {
         let mut stmt = self.conn.prepare(
             "SELECT * FROM credit_notes WHERE ?1 IS NULL OR invoice_id = ?1 ORDER BY date, id",
         )?;
-        let mut notes: Vec<CreditNote> =
-            stmt.query_map([invoice_id], credit_note_from_row)?.collect::<rusqlite::Result<_>>()?;
+        let mut notes: Vec<CreditNote> = stmt
+            .query_map([invoice_id], credit_note_from_row)?
+            .collect::<rusqlite::Result<_>>()?;
         let mut lines = self.conn.prepare_cached(
             "SELECT * FROM credit_note_lines WHERE credit_note_id = ?1 ORDER BY position",
         )?;
         for n in &mut notes {
-            n.lines = lines.query_map([n.id], line_from_row)?.collect::<rusqlite::Result<_>>()?;
+            n.lines = lines
+                .query_map([n.id], line_from_row)?
+                .collect::<rusqlite::Result<_>>()?;
         }
         Ok(notes)
     }
@@ -127,19 +138,34 @@ impl Db {
             bail!("a credit note can't be dated before its invoice");
         }
         let business = self.require_business()?;
-        let snapshot = Snapshot { business: business.clone(), client: self.client(invoice.client_id)? };
+        let snapshot = Snapshot {
+            business: business.clone(),
+            client: self.client(invoice.client_id)?,
+        };
 
         let tx = self.conn.unchecked_transaction()?;
-        let number = Self::next_number(&tx, "credit_note", &business.credit_note_pattern, date, |c, n| {
-            number_taken(c, "credit_notes", n)
-        })?;
+        let number = Self::next_number(
+            &tx,
+            "credit_note",
+            &business.credit_note_pattern,
+            date,
+            |c, n| number_taken(c, "credit_notes", n),
+        )?;
         tx.execute(
             "INSERT INTO credit_notes (number, invoice_id, date, reason, snapshot) VALUES (?1, ?2, ?3, ?4, ?5)",
             params![number, invoice_id, date, reason.trim(), serde_json::to_string(&snapshot)?],
         )?;
         let id = tx.last_insert_rowid();
         insert_lines(&tx, "credit_note_lines", "credit_note_id", id, &lines)?;
-        let note = CreditNote { id, number, invoice_id, date, reason: reason.trim().into(), lines, snapshot };
+        let note = CreditNote {
+            id,
+            number,
+            invoice_id,
+            date,
+            reason: reason.trim().into(),
+            lines,
+            snapshot,
+        };
         before_commit(&note, &invoice)?;
         tx.commit()?;
         Ok(note)
@@ -230,7 +256,10 @@ mod tests {
         inv.lines[0].quantity = Quantity::from_hundredths(33);
         inv.lines[0].unit_price = Money::from_pence(50); // 16.5p → 17p
         let id = db.create_draft(&inv).unwrap();
-        assert_eq!(db.totals(id).unwrap().total, db.invoice(id).unwrap().total());
+        assert_eq!(
+            db.totals(id).unwrap().total,
+            db.invoice(id).unwrap().total()
+        );
     }
 
     #[test]
@@ -251,7 +280,12 @@ mod tests {
         let t = db.totals(inv.id).unwrap();
         assert_eq!(t.balance(), Money::ZERO);
         assert_eq!(t.status(&inv, d(2026, 12, 1)), Status::Paid);
-        assert_eq!(db.transactions(TxKind::Payment, Some(inv.id)).unwrap().len(), 2);
+        assert_eq!(
+            db.transactions(TxKind::Payment, Some(inv.id))
+                .unwrap()
+                .len(),
+            2
+        );
     }
 
     #[test]
@@ -262,10 +296,19 @@ mod tests {
         // Nothing owed back yet.
         assert!(db.add_refund(&payment(inv.id, 1)).is_err());
         let cn = db
-            .create_credit_note(inv.id, d(2026, 10, 20), "Hosting not needed", credit_line(15_000), |_, _| Ok(()))
+            .create_credit_note(
+                inv.id,
+                d(2026, 10, 20),
+                "Hosting not needed",
+                credit_line(15_000),
+                |_, _| Ok(()),
+            )
             .unwrap();
         assert_eq!(cn.number, "CN-2026-001");
-        assert_eq!(db.totals(inv.id).unwrap().balance(), Money::from_pence(-15_000));
+        assert_eq!(
+            db.totals(inv.id).unwrap().balance(),
+            Money::from_pence(-15_000)
+        );
         assert!(db.add_refund(&payment(inv.id, 15_001)).is_err());
         db.add_refund(&payment(inv.id, 15_000)).unwrap();
         let t = db.totals(inv.id).unwrap();
@@ -277,16 +320,38 @@ mod tests {
     fn credit_notes_cannot_exceed_the_invoice() {
         let (db, client) = db_with_client();
         let inv = issued(&db, client);
-        db.create_credit_note(inv.id, d(2026, 10, 20), "Part", credit_line(50_000), |_, _| Ok(())).unwrap();
+        db.create_credit_note(
+            inv.id,
+            d(2026, 10, 20),
+            "Part",
+            credit_line(50_000),
+            |_, _| Ok(()),
+        )
+        .unwrap();
         assert!(
-            db.create_credit_note(inv.id, d(2026, 10, 20), "Too much", credit_line(10_001), |_, _| Ok(()))
-                .is_err()
+            db.create_credit_note(
+                inv.id,
+                d(2026, 10, 20),
+                "Too much",
+                credit_line(10_001),
+                |_, _| Ok(())
+            )
+            .is_err()
         );
         let cn = db
-            .create_credit_note(inv.id, d(2026, 10, 21), "Rest", credit_line(10_000), |_, _| Ok(()))
+            .create_credit_note(
+                inv.id,
+                d(2026, 10, 21),
+                "Rest",
+                credit_line(10_000),
+                |_, _| Ok(()),
+            )
             .unwrap();
         assert_eq!(cn.number, "CN-2026-002");
-        assert_eq!(db.totals(inv.id).unwrap().status(&inv, d(2027, 1, 1)), Status::Credited);
+        assert_eq!(
+            db.totals(inv.id).unwrap().status(&inv, d(2027, 1, 1)),
+            Status::Credited
+        );
         assert_eq!(db.credit_notes(Some(inv.id)).unwrap().len(), 2);
     }
 
@@ -295,8 +360,14 @@ mod tests {
         let (db, client) = db_with_client();
         let inv = issued(&db, client);
         assert!(
-            db.create_credit_note(inv.id, d(2026, 10, 20), "x", credit_line(100), |_, _| anyhow::bail!("pdf"))
-                .is_err()
+            db.create_credit_note(
+                inv.id,
+                d(2026, 10, 20),
+                "x",
+                credit_line(100),
+                |_, _| anyhow::bail!("pdf")
+            )
+            .is_err()
         );
         assert!(db.credit_notes(None).unwrap().is_empty());
     }
