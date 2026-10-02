@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.2.0 — 2026-10-03
+
+- `{LABEL}` number token for per-client numbering, e.g. `LGT-2026-0001`.
+  Each label has its own sequence. Labels are uppercase A–Z/0–9, unique,
+  required before issuing when the pattern uses them, and locked once used on
+  an issued invoice or credit note.
+- International clients: country (always printed), tax ID name and number
+  (printed under the address), and postcode/ZIP in any format.
+- Template data: `client.tax_id`; `client.address` now ends with the country.
+- The output folder must now be a full path (`~/…` or `/…`).
+- Database migration 2 (existing clients are set to United Kingdom).
+
 ## 0.1.0 — 2026-10-03
 
 First version.

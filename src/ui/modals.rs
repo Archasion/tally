@@ -47,19 +47,27 @@ pub fn client_form(c: Option<&Client>) -> Form {
         .text("name", "Name", c.name)
         .required()
         .hint("Company or person, as it should appear on invoices")
+        .text("label", "Label", c.label)
+        .hint("For {LABEL} in numbers: LGT → LGT-2026-0001. A–Z/0–9, locked once used")
         .text("contact", "Contact / FAO", c.contact_name)
         .hint("Optional, e.g. Accounts Payable")
         .text("email", "Email", c.email)
         .text("line1", "Address line 1", c.address.line1)
         .text("line2", "Address line 2", c.address.line2)
         .text("town", "Town / city", c.address.town)
-        .text("postcode", "Postcode", c.address.postcode)
+        .hint("Include any state, province or region here, e.g. Austin, TX")
+        .text("postcode", "Postcode / ZIP", c.address.postcode)
+        .text("country", "Country", c.address.country)
+        .required()
+        .hint("Printed as the last address line on every invoice")
+        .text("tax_id_label", "Tax ID name", c.tax_id_label)
+        .hint("Optional, e.g. VAT ID, VAT number, ABN, EIN, GST number")
+        .text("tax_id", "Tax ID", c.tax_id)
+        .hint("Printed under the client's address, e.g. DE123456789")
         .toggle("business", "Business client", c.is_business)
         .hint("Statutory late-payment interest only applies to business clients")
         .toggle("late", "Late-payment notice", c.late_payment_notice)
-        .hint(
-            "Print the statutory interest notice on this client's invoices (business clients only)",
-        )
+        .hint("Print the UK statutory interest notice (business clients only)")
         .text(
             "rate",
             "Default rate (£)",
@@ -321,8 +329,12 @@ impl App {
                         line1: form.value("line1"),
                         line2: form.value("line2"),
                         town: form.value("town"),
-                        postcode: form.value("postcode").to_uppercase(),
+                        postcode: form.value("postcode"),
+                        country: form.value("country"),
                     },
+                    label: form.value("label"),
+                    tax_id_label: form.value("tax_id_label"),
+                    tax_id: form.value("tax_id"),
                     is_business: form.is_on("business"),
                     late_payment_notice: form.is_on("late"),
                     default_rate: rate,
@@ -336,12 +348,27 @@ impl App {
                     );
                     return Ok(false);
                 }
-                if client.address.lines().is_empty() {
+                if client.address.line1.is_empty() && client.address.town.is_empty() {
                     form.fail(
                         "line1",
                         "Enter the client's address (required on UK invoices)",
                     );
                     return Ok(false);
+                }
+                if let Err(e) = crate::domain::numbering::normalize_label(&client.label) {
+                    form.fail("label", e);
+                    return Ok(false);
+                }
+                match (client.tax_id_label.is_empty(), client.tax_id.is_empty()) {
+                    (true, false) => {
+                        form.fail("tax_id_label", "Say what the tax ID is called, e.g. VAT ID");
+                        return Ok(false);
+                    }
+                    (false, true) => {
+                        form.fail("tax_id", "Enter the tax ID, or clear its name");
+                        return Ok(false);
+                    }
+                    _ => {}
                 }
                 if client.id == 0 {
                     let id = self.db.insert_client(&client)?;

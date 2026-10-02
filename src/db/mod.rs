@@ -14,10 +14,13 @@ use chrono::NaiveDate;
 use rusqlite::{Connection, OptionalExtension, Row, params};
 
 use crate::domain::numbering::NumberPattern;
-use crate::domain::{Address, BankDetails, Business, LineItem, LineKind, Money, Quantity};
+use crate::domain::{Address, BankDetails, Business, Client, LineItem, LineKind, Money, Quantity};
 
 /// Migrations, applied in order. `PRAGMA user_version` records how many have run.
-const MIGRATIONS: &[&str] = &[include_str!("schema.sql")];
+const MIGRATIONS: &[&str] = &[
+    include_str!("schema.sql"),
+    include_str!("002_international_clients.sql"),
+];
 
 pub struct Db {
     conn: Connection,
@@ -136,10 +139,18 @@ impl Db {
         kind: &str,
         pattern: &str,
         date: NaiveDate,
+        client: &Client,
         taken: impl Fn(&Connection, &str) -> Result<bool>,
     ) -> Result<String> {
         let pattern = NumberPattern::parse(pattern).map_err(anyhow::Error::msg)?;
-        let scope = pattern.scope(date);
+        let label = client.label.as_str();
+        if pattern.uses_label() && label.is_empty() {
+            bail!(
+                "{} has no label, and your number pattern uses {{LABEL}}. Give them one under Clients (e).",
+                client.name
+            );
+        }
+        let scope = pattern.scope(date, label);
         let last: u32 = conn
             .query_row(
                 "SELECT last FROM sequences WHERE kind = ?1 AND scope = ?2",
@@ -149,10 +160,10 @@ impl Db {
             .optional()?
             .unwrap_or(0);
         let mut seq = last + 1;
-        let mut number = pattern.render(seq, date);
+        let mut number = pattern.render(seq, date, label);
         while taken(conn, &number)? {
             seq += 1;
-            number = pattern.render(seq, date);
+            number = pattern.render(seq, date, label);
         }
         conn.execute(
             "INSERT INTO sequences (kind, scope, last) VALUES (?1, ?2, ?3)
@@ -171,6 +182,7 @@ fn business_from_row(r: &Row) -> rusqlite::Result<Business> {
             line2: r.get("address_line2")?,
             town: r.get("town")?,
             postcode: r.get("postcode")?,
+            country: String::new(),
         },
         email: r.get("email")?,
         phone: r.get("phone")?,
@@ -211,7 +223,6 @@ fn json_column<T: serde::de::DeserializeOwned>(r: &Row, col: &str) -> rusqlite::
 #[cfg(test)]
 pub(crate) mod test_support {
     use super::*;
-    use crate::domain::Client;
 
     pub fn business() -> Business {
         Business {
@@ -221,6 +232,7 @@ pub(crate) mod test_support {
                 line2: String::new(),
                 town: "Bristol".into(),
                 postcode: "BS1 1AA".into(),
+                country: String::new(),
             },
             email: "nick@example.com".into(),
             phone: String::new(),
@@ -265,6 +277,21 @@ mod tests {
             .pragma_query_value(None, "user_version", |r| r.get(0))
             .unwrap();
         assert_eq!(v as usize, MIGRATIONS.len());
+    }
+
+    #[test]
+    fn upgrades_a_version_1_database() {
+        // Build a v1 database with a client, then reopen it with the current code.
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(MIGRATIONS[0]).unwrap();
+        conn.pragma_update(None, "user_version", 1).unwrap();
+        conn.execute("INSERT INTO clients (name) VALUES ('Old Client')", [])
+            .unwrap();
+        let db = Db::init(conn).unwrap();
+        let c = &db.clients(true).unwrap()[0];
+        assert_eq!(c.name, "Old Client");
+        assert_eq!(c.address.country, "United Kingdom");
+        assert_eq!(c.label, "");
     }
 
     #[test]

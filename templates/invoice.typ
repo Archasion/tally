@@ -60,6 +60,10 @@
     #text(weight: "bold", data.client.name) \
     #if data.client.contact != "" [#data.client.contact \ ]
     #for l in data.client.address [#l \ ]
+    #if data.client.tax_id != "" {
+      v(0.3em)
+      text(fill: muted, data.client.tax_id)
+    }
   ],
   grid(
     columns: (auto, auto),

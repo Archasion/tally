@@ -130,8 +130,15 @@ impl App {
                     ratatui::style::Style::new()
                 };
                 Row::new(vec![
+                    Line::styled(c.label.clone(), theme::accent()),
                     Line::styled(c.name.clone(), name_style),
-                    Line::from(c.address.town.clone()),
+                    Line::from(
+                        [c.address.town.as_str(), c.address.country.as_str()]
+                            .into_iter()
+                            .filter(|s| !s.is_empty())
+                            .collect::<Vec<_>>()
+                            .join(", "),
+                    ),
                     Line::from(kind),
                     Line::from(rate).right_aligned(),
                     Line::from(if owed.is_zero() {
@@ -147,15 +154,16 @@ impl App {
         let table = Table::new(
             rows,
             [
+                Constraint::Length(10),
                 Constraint::Fill(2),
-                Constraint::Fill(1),
+                Constraint::Fill(2),
                 Constraint::Length(22),
                 Constraint::Length(14),
                 Constraint::Length(12),
             ],
         )
         .header(super::numeric_header(
-            &["Name", "Town", "Type"],
+            &["Label", "Name", "Location", "Type"],
             &["Default rate", "Owed"],
         ))
         .column_spacing(2)

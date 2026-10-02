@@ -149,6 +149,7 @@ impl Db {
             "credit_note",
             &business.credit_note_pattern,
             date,
+            &snapshot.client,
             |c, n| number_taken(c, "credit_notes", n),
         )?;
         tx.execute(

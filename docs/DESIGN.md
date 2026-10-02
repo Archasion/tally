@@ -11,7 +11,7 @@ src/
   lib.rs
   domain/            Pure logic, no I/O, unit-tested
     money.rs         Money (i64 pence), Quantity (i64 hundredths), rounding
-    numbering.rs     {YEAR}-{SEQ:4} patterns
+    numbering.rs     {LABEL}-{YEAR}-{SEQ:4} patterns, client labels
     dates.rs         UK date parsing/formatting, TaxYear
     model.rs         Business, Client, Invoice, LineItem, CreditNote,
                      Transaction, Totals → Status
@@ -99,19 +99,47 @@ Draft ──issue──▶ Issued ──mark sent──▶ Sent
 
 ### Numbering
 
-- Tokens: `{YEAR}`, `{YY}`, `{MONTH}`, `{SEQ}` / `{SEQ:n}`. A pattern must
+- Tokens: `{YEAR}`, `{YY}`, `{MONTH}`, `{LABEL}`, `{SEQ}` / `{SEQ:n}`. A pattern must
   contain `{SEQ}` exactly once. Only letters, digits, `-`, `_` and `.` are
   allowed, so a number is always safe to use as a filename.
 - If the pattern contains `{YEAR}` or `{YY}`, the sequence restarts every
   calendar year. The year used is the year of the **issue date**. Without a
   year token it never restarts. `{MONTH}` is only a label and never restarts
   the sequence.
+- `{LABEL}` is the client's label (e.g. `LGT`). If a pattern contains it,
+  **each label has its own sequence**, so `LGT-2026-0001` and `ACM-2026-0001`
+  can both exist. The scope is `LABEL:YEAR`, or `LABEL:all` without a year
+  token. Both the invoice and credit-note patterns can use it.
+- Client labels:
+  - stored uppercase, A–Z and 0–9 only, up to 10 characters
+  - unique across clients (a partial unique index allows any number of
+    clients with no label)
+  - **required before issuing** when the pattern uses `{LABEL}`; otherwise
+    issuing fails before a number is used up
+  - **locked** once any issued invoice or credit note has the label in its
+    snapshot, so that client's numbering stays continuous. A trigger
+    enforces this. A client whose earlier invoices had no label can still be
+    given one.
 - Counters are stored per (document kind, scope) in `sequences`. If a
   generated number already exists, for example after you change the pattern,
   the counter skips ahead until it finds a free one. Numbers are therefore
   always unique, and gap-free unless you change the pattern.
 - Numbers are given out in the order invoices are issued, not by date. A
   back-dated invoice issued today gets the next number.
+
+### International clients
+
+- Every client address has a **country**. It's always printed as the last
+  address line, including "United Kingdom". Existing clients were set to
+  United Kingdom by migration 2.
+- The postcode field takes any format (e.g. ZIP codes) and isn't
+  upper-cased. Put states or regions in the town field.
+- An optional **tax ID** is stored as a name plus a number (e.g. *VAT ID* +
+  *DE123456789*), printed under the client's address. You must fill in both
+  or neither.
+- All amounts are in **GBP**; there's no currency conversion.
+- New client fields use `#[serde(default)]`, so snapshots on invoices issued
+  before these fields existed still load and render unchanged.
 
 ### Tax year and income
 
@@ -137,6 +165,8 @@ Outstanding invoices are grouped by days past the due date: not yet due,
 | **A small `PRAGMA user_version` migration runner, not `rusqlite_migration`** | `rusqlite_migration` 2.6 needs Rust 1.95, newer than the toolchain this was built on. The runner applies numbered SQL files in a transaction each. |
 | **No `config.toml`** | All settings live in the `business` row, so there's one source of truth that's backed up with your data. Only the database path is fixed (overridable with `TALLY_DB`). |
 | **The database is local, not in the synced folder** | Sync services can corrupt a SQLite file mid-write. The synced folder gets PDFs and atomic backups instead. |
+| **Labels are per client with their own sequences, not a business-wide prefix** | Requested: invoices to each client are numbered separately (LGT-…-0001, ACM-…-0001). |
+| **Labels lock once used** | Changing a label after issuing would split one client's numbering into two series. |
 | **Structured address fields, not a multi-line text area** | `tui-textarea` doesn't support ratatui 0.30. Separate fields also give cleaner PDFs. |
 | **Credit notes from the TUI have one line** | The data model and PDF support several lines. The UI keeps the common case (one amount plus a reason) quick. |
 | **Notes are single-line** | Same reason: `tui-input` is single-line. Long notes wrap on the PDF. |

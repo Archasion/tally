@@ -25,6 +25,7 @@ fn full_invoice_lifecycle() {
             line2: String::new(),
             town: "Bristol".into(),
             postcode: "BS1 1AA".into(),
+            country: String::new(),
         },
         email: String::new(),
         phone: String::new(),
@@ -35,7 +36,7 @@ fn full_invoice_lifecycle() {
         },
         payment_terms_days: 30,
         default_notes: String::new(),
-        invoice_pattern: "{YEAR}-{SEQ:4}".into(),
+        invoice_pattern: "{LABEL}-{YEAR}-{SEQ:4}".into(),
         credit_note_pattern: "CN-{YEAR}-{SEQ:3}".into(),
         output_dir: out.display().to_string(),
         backups_to_keep: 2,
@@ -44,8 +45,13 @@ fn full_invoice_lifecycle() {
 
     let mut client = Client::new_empty();
     client.name = "Acme Ltd".into();
-    client.address.line1 = "2 Market Sq".into();
-    client.late_payment_notice = true;
+    client.label = "acm".into();
+    client.address.line1 = "Hauptstraße 1".into();
+    client.address.town = "Berlin".into();
+    client.address.postcode = "10115".into();
+    client.address.country = "Germany".into();
+    client.tax_id_label = "VAT ID".into();
+    client.tax_id = "DE123456789".into();
     let client_id = db.insert_client(&client).unwrap();
 
     let issue = d(2026, 9, 30);
@@ -77,10 +83,17 @@ fn full_invoice_lifecycle() {
             renderer.write_invoice(&out, inv).map(|_| ())
         })
         .unwrap();
-    assert_eq!(inv.number.as_deref(), Some("2026-0001"));
+    assert_eq!(inv.number.as_deref(), Some("ACM-2026-0001"));
     let pdf = paths::invoice_pdf(&out, &inv);
-    assert!(pdf.ends_with("2026/2026-0001_Acme-Ltd.pdf"));
+    assert!(pdf.ends_with("2026/ACM-2026-0001_Acme-Ltd.pdf"));
     assert!(std::fs::read(&pdf).unwrap().starts_with(b"%PDF-"));
+    let data = tally::pdf::DocumentData::for_invoice(&inv).unwrap();
+    assert_eq!(
+        data.client.address.last().map(String::as_str),
+        Some("Germany")
+    );
+    assert_eq!(data.client.tax_id, "VAT ID: DE123456789");
+    assert!(data.late_payment_notice.is_empty());
 
     // Renaming the client later doesn't change the issued invoice.
     let mut renamed = db.client(client_id).unwrap();
@@ -139,7 +152,7 @@ fn full_invoice_lifecycle() {
     let export = reports::export_csv(&db, &out, today).unwrap();
     let invoices_csv = std::fs::read_to_string(export.join("invoices.csv")).unwrap();
     assert!(
-        invoices_csv.contains("2026-0001,Paid,Acme Ltd,"),
+        invoices_csv.contains("ACM-2026-0001,Paid,Acme Ltd,"),
         "{invoices_csv}"
     );
     assert_eq!(db.transactions(TxKind::Refund, None).unwrap().len(), 1);

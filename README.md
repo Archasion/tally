@@ -28,7 +28,12 @@ embedded [Typst](https://typst.app) compiler. No external tools are needed.
   the client's, writes the PDF and locks the invoice. Corrections are made with
   **credit notes**. SQLite triggers enforce the lock as well as the app.
 - **Configurable numbering**, e.g. `{YEAR}-{SEQ:4}` → `2026-0001`, restarting
-  every 1 January.
+  every 1 January. Add `{LABEL}` for per-client numbering:
+  `{LABEL}-{YEAR}-{SEQ:4}` → `LGT-2026-0001`, `ACM-2026-0001`, each client
+  counting separately.
+- **International clients:** each client has a country, which is always
+  printed, and an optional tax ID with its local name, e.g. *VAT ID:
+  DE123456789* or *ABN: 51 824 753 556*. Amounts are always in GBP.
 - **Status tracking:** Draft → Issued → Sent → Part paid → Paid, with
   Overdue and Credited worked out automatically.
 - **Partial payments, overpayments and refunds.**
@@ -76,7 +81,7 @@ were issued with.
 
 | Task | Keys |
 |---|---|
-| Add a client | `3`, then `n` |
+| Add a client | `3`, then `n` (give them a label if your number pattern uses `{LABEL}`) |
 | Start an invoice | `n` on the Dashboard or Invoices tab, or `i` on a client |
 | Add or edit lines | in the editor, move down past *Notes* into Lines; `a` adds, `Enter` edits, `d` deletes, `K`/`J` reorder |
 | Save a draft | `Ctrl+S` |

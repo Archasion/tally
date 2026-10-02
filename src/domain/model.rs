@@ -10,17 +10,28 @@ pub struct Address {
     pub line1: String,
     pub line2: String,
     pub town: String,
+    /// Postcode or ZIP; formats vary by country.
     pub postcode: String,
+    /// Empty for your own business address; clients default to United Kingdom.
+    /// (`default` keeps snapshots from before this field existed readable.)
+    #[serde(default)]
+    pub country: String,
 }
 
 impl Address {
     /// Non-empty address lines, in display order.
     pub fn lines(&self) -> Vec<String> {
-        [&self.line1, &self.line2, &self.town, &self.postcode]
-            .into_iter()
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())
-            .collect()
+        [
+            &self.line1,
+            &self.line2,
+            &self.town,
+            &self.postcode,
+            &self.country,
+        ]
+        .into_iter()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect()
     }
 }
 
@@ -93,6 +104,8 @@ impl LineKind {
     }
 }
 
+pub const DEFAULT_COUNTRY: &str = "United Kingdom";
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Client {
     pub id: i64,
@@ -100,6 +113,15 @@ pub struct Client {
     pub contact_name: String,
     pub email: String,
     pub address: Address,
+    /// Short code used by the `{LABEL}` number token, e.g. `LGT`. Empty = none.
+    /// Uppercase A–Z/0–9, unique across clients, locked once used on an issued invoice.
+    #[serde(default)]
+    pub label: String,
+    /// What the client's tax number is called, e.g. `VAT ID`, `ABN`, `EIN`.
+    #[serde(default)]
+    pub tax_id_label: String,
+    #[serde(default)]
+    pub tax_id: String,
     /// Business clients can be sent the statutory late-payment notice.
     pub is_business: bool,
     pub late_payment_notice: bool,
@@ -116,7 +138,13 @@ impl Client {
             name: String::new(),
             contact_name: String::new(),
             email: String::new(),
-            address: Address::default(),
+            address: Address {
+                country: DEFAULT_COUNTRY.into(),
+                ..Address::default()
+            },
+            label: String::new(),
+            tax_id_label: String::new(),
+            tax_id: String::new(),
             is_business: true,
             late_payment_notice: false,
             default_rate: None,
@@ -299,6 +327,17 @@ impl Totals {
 mod tests {
     use super::*;
 
+    #[test]
+    fn snapshots_from_before_international_fields_still_load() {
+        let old = r#"{"id":1,"name":"Acme","contact_name":"","email":"",
+            "address":{"line1":"1 A St","line2":"","town":"Bath","postcode":"BA1 1AA"},
+            "is_business":true,"late_payment_notice":false,"default_rate":null,
+            "default_rate_kind":"Hours","archived":false}"#;
+        let c: Client = serde_json::from_str(old).unwrap();
+        assert_eq!(c.label, "");
+        assert_eq!(c.address.country, "");
+    }
+
     fn d(y: i32, m: u32, day: u32) -> NaiveDate {
         NaiveDate::from_ymd_opt(y, m, day).unwrap()
     }
@@ -395,7 +434,19 @@ mod tests {
             line2: " ".into(),
             town: "Bristol".into(),
             postcode: "BS1 1AA".into(),
+            country: String::new(),
         };
         assert_eq!(a.lines(), vec!["1 High St", "Bristol", "BS1 1AA"]);
+        let abroad = Address {
+            line1: "Hauptstraße 1".into(),
+            postcode: "10115".into(),
+            town: "Berlin".into(),
+            country: "Germany".into(),
+            ..Address::default()
+        };
+        assert_eq!(
+            abroad.lines(),
+            vec!["Hauptstraße 1", "Berlin", "10115", "Germany"]
+        );
     }
 }

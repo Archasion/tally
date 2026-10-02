@@ -45,7 +45,10 @@ pub struct DocumentData {
 pub struct Party {
     pub name: String,
     pub contact: String,
+    /// Address lines, ending with the country for clients.
     pub address: Vec<String>,
+    /// e.g. `VAT ID: DE123456789`; empty if none.
+    pub tax_id: String,
     pub email: String,
     pub phone: String,
 }
@@ -168,6 +171,7 @@ fn business_party(snap: &Snapshot) -> Party {
         name: b.name.clone(),
         contact: String::new(),
         address: b.address.lines(),
+        tax_id: String::new(),
         email: b.email.clone(),
         phone: b.phone.clone(),
     }
@@ -179,6 +183,11 @@ fn client_party(snap: &Snapshot) -> Party {
         name: c.name.clone(),
         contact: c.contact_name.clone(),
         address: c.address.lines(),
+        tax_id: match (c.tax_id_label.trim(), c.tax_id.trim()) {
+            (_, "") => String::new(),
+            ("", id) => id.to_string(),
+            (label, id) => format!("{label}: {id}"),
+        },
         email: c.email.clone(),
         phone: String::new(),
     }
@@ -326,6 +335,7 @@ pub fn sample_invoice() -> Invoice {
             line2: String::new(),
             town: "Bristol".into(),
             postcode: "BS1 1AA".into(),
+            country: String::new(),
         },
         email: "you@example.com".into(),
         phone: "07700 900000".into(),
@@ -349,11 +359,15 @@ pub fn sample_invoice() -> Invoice {
         line2: "Suite 4".into(),
         town: "Bath".into(),
         postcode: "BA1 1AA".into(),
+        country: DEFAULT_COUNTRY.into(),
     };
+    client.label = "EXC".into();
+    client.tax_id_label = "VAT number".into();
+    client.tax_id = "GB123456789".into();
     client.late_payment_notice = true;
     Invoice {
         id: 0,
-        number: Some(format!("{}-0001", issue.format("%Y"))),
+        number: Some(format!("EXC-{}-0001", issue.format("%Y"))),
         client_id: 0,
         issue_date: issue,
         due_date: issue + Days::new(30),

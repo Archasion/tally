@@ -136,6 +136,7 @@ impl Db {
             "invoice",
             &business.invoice_pattern,
             inv.issue_date,
+            &snapshot.client,
             |c, n| number_taken(c, "invoices", n),
         )?;
         tx.execute(
@@ -408,6 +409,119 @@ pub(crate) mod tests {
                 .unwrap(),
             "INV-002"
         );
+    }
+
+    fn use_label_pattern(db: &Db) {
+        let mut b = db.require_business().unwrap();
+        b.invoice_pattern = "{LABEL}-{YEAR}-{SEQ:4}".into();
+        db.save_business(&b).unwrap();
+    }
+
+    fn add_client(db: &Db, name: &str, label: &str) -> i64 {
+        let mut c = crate::domain::Client::new_empty();
+        c.name = name.into();
+        c.label = label.into();
+        db.insert_client(&c).unwrap()
+    }
+
+    #[test]
+    fn labelled_numbers_count_per_client() {
+        let (db, acme) = db_with_client();
+        use_label_pattern(&db);
+        let mut c = db.client(acme).unwrap();
+        c.label = "acm".into(); // normalised to ACM
+        db.update_client(&c).unwrap();
+        let lgt = add_client(&db, "Logitech", "LGT");
+
+        let issue = |client| {
+            let id = db.create_draft(&draft(client, d(2026, 10, 2))).unwrap();
+            db.issue_invoice(id, now(), |_| Ok(()))
+                .unwrap()
+                .number
+                .unwrap()
+        };
+        assert_eq!(issue(lgt), "LGT-2026-0001");
+        assert_eq!(issue(acme), "ACM-2026-0001");
+        assert_eq!(issue(lgt), "LGT-2026-0002");
+        let next_year = db.create_draft(&draft(lgt, d(2027, 1, 4))).unwrap();
+        assert_eq!(
+            db.issue_invoice(next_year, now(), |_| Ok(()))
+                .unwrap()
+                .number
+                .unwrap(),
+            "LGT-2027-0001"
+        );
+    }
+
+    #[test]
+    fn issuing_requires_a_label_when_the_pattern_uses_one() {
+        let (db, acme) = db_with_client();
+        use_label_pattern(&db);
+        let id = db.create_draft(&draft(acme, d(2026, 10, 2))).unwrap();
+        let err = db.issue_invoice(id, now(), |_| Ok(())).unwrap_err();
+        assert!(err.to_string().contains("Acme Ltd has no label"), "{err}");
+        assert!(db.invoice(id).unwrap().is_draft());
+    }
+
+    #[test]
+    fn labels_are_unique_and_validated() {
+        let (db, _) = db_with_client();
+        add_client(&db, "Logitech", "LGT");
+        let mut dup = crate::domain::Client::new_empty();
+        dup.name = "Lighthouse Group".into();
+        dup.label = "lgt".into();
+        let err = db.insert_client(&dup).unwrap_err();
+        assert!(
+            err.to_string().contains("already used by Logitech"),
+            "{err}"
+        );
+        dup.label = "L-G".into();
+        assert!(db.insert_client(&dup).is_err());
+        // Several clients may have no label.
+        add_client(&db, "No Label One", "");
+        add_client(&db, "No Label Two", "");
+    }
+
+    #[test]
+    fn label_locks_once_used_on_an_issued_invoice() {
+        let (db, acme) = db_with_client();
+        // Issued while the client had no label…
+        let id = db.create_draft(&draft(acme, d(2026, 10, 2))).unwrap();
+        db.issue_invoice(id, now(), |_| Ok(())).unwrap();
+        // …so a first label can still be set, and changed while unused.
+        let mut c = db.client(acme).unwrap();
+        c.label = "ACM".into();
+        db.update_client(&c).unwrap();
+        c.label = "ACME".into();
+        db.update_client(&c).unwrap();
+        // Once an invoice is issued with it, it's locked.
+        let id = db.create_draft(&draft(acme, d(2026, 10, 3))).unwrap();
+        db.issue_invoice(id, now(), |_| Ok(())).unwrap();
+        c.label = "AC".into();
+        let err = db.update_client(&c).unwrap_err();
+        assert!(err.to_string().contains("label can't change"), "{err}");
+        // Other fields can still change.
+        c.label = "ACME".into();
+        c.address.country = "Ireland".into();
+        db.update_client(&c).unwrap();
+    }
+
+    #[test]
+    fn credit_note_patterns_can_use_the_label_too() {
+        let (db, acme) = db_with_client();
+        let mut b = db.require_business().unwrap();
+        b.credit_note_pattern = "CN-{LABEL}-{SEQ:3}".into();
+        db.save_business(&b).unwrap();
+        let mut c = db.client(acme).unwrap();
+        c.label = "ACM".into();
+        db.update_client(&c).unwrap();
+        let id = db.create_draft(&draft(acme, d(2026, 10, 2))).unwrap();
+        db.issue_invoice(id, now(), |_| Ok(())).unwrap();
+        let line = draft(acme, d(2026, 10, 2)).lines[1].clone();
+        let cn = db
+            .create_credit_note(id, d(2026, 10, 5), "Cancelled", vec![line], |_, _| Ok(()))
+            .unwrap();
+        assert_eq!(cn.number, "CN-ACM-001");
     }
 
     #[test]

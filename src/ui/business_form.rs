@@ -43,14 +43,14 @@ pub fn form(b: Option<&Business>) -> Form {
         .hint("Pre-filled on new invoices")
         .text("invoice_pattern", "Invoice number pattern", get(|b| b.invoice_pattern.clone(), "{YEAR}-{SEQ:4}"))
         .required()
-        .hint("Tokens: {YEAR} {YY} {MONTH} {SEQ:n}. With {YEAR}/{YY} numbering restarts each 1 January")
+        .hint("Tokens: {LABEL} (client label) {YEAR} {YY} {MONTH} {SEQ:n}, e.g. {LABEL}-{YEAR}-{SEQ:4}")
         .text(
             "credit_pattern",
             "Credit note pattern",
             get(|b| b.credit_note_pattern.clone(), "CN-{YEAR}-{SEQ:3}"),
         )
         .required()
-        .hint("Same tokens as the invoice pattern")
+        .hint("Same tokens. {YEAR}/{YY} restart numbering each 1 January; {LABEL} numbers each client separately")
         .text("output_dir", "Output folder", get(|b| b.output_dir.clone(), "~/Documents/Invoices"))
         .required()
         .hint("Your synced folder for PDFs, backups, exports and template.typ (~ allowed)")
@@ -104,6 +104,13 @@ fn parse(form: &mut Form) -> Option<Business> {
         );
         return None;
     }
+    if !paths::expand_home(&form.value("output_dir")).is_absolute() {
+        form.fail(
+            "output_dir",
+            "Use a full path, e.g. ~/Documents/Invoices or /Users/you/Invoices",
+        );
+        return None;
+    }
     let backups = match form.value("backups").parse::<u32>() {
         Ok(n) if n >= 1 => n,
         _ => {
@@ -118,6 +125,7 @@ fn parse(form: &mut Form) -> Option<Business> {
             line2: form.value("line2"),
             town: form.value("town"),
             postcode: form.value("postcode").to_uppercase(),
+            country: String::new(),
         },
         email: form.value("email"),
         phone: form.value("phone"),
@@ -303,6 +311,11 @@ mod tests {
         let mut f = filled();
         f.set_value("credit_pattern", "{YEAR}-{SEQ:4}");
         assert!(parse(&mut f).is_none());
+
+        let mut f = filled();
+        f.set_value("output_dir", "{LABEL}-{YEAR}");
+        assert!(parse(&mut f).is_none());
+        assert_eq!(f.focused_key(), "output_dir");
 
         let mut f = filled();
         f.set_value("name", "");
