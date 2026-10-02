@@ -88,12 +88,13 @@
 )
 
 #v(0.4em)
-#align(right, grid(
-  columns: (auto, 7.5em),
-  column-gutter: 1.5em,
+// Right padding matches the table's cell inset so the total lines up with Amount.
+#align(right, pad(right: 5pt, grid(
+  columns: (auto, auto),
+  column-gutter: 2em,
   align: right + horizon,
   text(weight: "bold", data.total_label), text(13pt, weight: "bold", data.total),
-))
+)))
 
 // ----- Payment --------------------------------------------------------------
 
