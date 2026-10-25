@@ -15,6 +15,7 @@ src/
     dates.rs         UK date parsing/formatting, TaxYear
     model.rs         Business, Client, Invoice, LineItem, CreditNote,
                      Transaction, Totals → Status
+    expense.rs       Expense, SA103F categories, billing periods
   db/                SQLite (rusqlite, bundled)
     schema.sql       Tables + triggers that enforce locking
     mod.rs           Open/migrate, business settings, number allocation
@@ -32,10 +33,12 @@ src/
     rates.rs         Typed per-year rates from rates/uk.toml + rates.toml
 rates/uk.toml        Built-in rates with GOV.UK sources and verified dates
   backup.rs          Online backup + pruning
+  receipts.rs        Copying receipt files in, and next to invoice PDFs
   paths.rs           Database location, output folder layout, safe filenames
   ui/                ratatui + crossterm full-screen app
     mod.rs           App state, event loop, navigation, chrome
-    form.rs          Reusable form widget (text / choice / toggle fields)
+    form.rs          Reusable form widget (text / choice / toggle fields,
+                     optional overview panel listing a choice's options)
     business_form.rs Setup wizard and Settings
     dashboard.rs, invoices.rs, editor.rs, clients.rs, expenses.rs,
     report_view.rs   (includes the Tax estimate tab)
@@ -67,6 +70,13 @@ Draft ──issue──▶ Issued ──mark sent──▶ Sent
 ```
 
 - **Draft:** has no number and can be freely edited or deleted.
+- **Preview** (`Db::preview_invoice`) renders a draft, including unsaved
+  edits, as it would be issued now. It attaches the current business and
+  client details and reimbursement details, and shows the number it would
+  get. That number comes from a read-only peek at the sequence, which writes
+  nothing. Issuing later can still get a different number if another invoice
+  is issued first. The PDF is titled DRAFT INVOICE, watermarked, and written
+  to `$TMPDIR/tally-preview/`, never the output folder.
 - **Issuing** happens in one transaction:
   1. Allocate the next number.
   2. Store a JSON *snapshot* of the business and client details.
@@ -181,6 +191,53 @@ basis:
 
 See [TAX.md](TAX.md) for the user-facing rules and values.
 
+### Reimbursements
+
+Equipment or software a client pays you back for is a **recharge**: you
+bought it in your own name, so it's your expense, and the client's payment is
+income. Profit isn't affected, but turnover includes the reimbursement, which
+counts towards the MTD and VAT thresholds. Disbursements (bought as the
+client's agent, outside your accounts) aren't modelled.
+
+- An expense with a **rebill client** can be added to that client's invoice
+  as a fixed-price line linked by `line_items.expense_id`. The line's
+  `detail` (billing period, payment date, approval and supplier invoice
+  number) is generated when it's added, refreshed from the expense when the
+  invoice is issued, and then **frozen** with the line, so editing the
+  expense later never changes an issued invoice.
+- Saving a draft, and issuing it, checks that each linked line:
+  - belongs to the invoice's client
+  - is approved (**who** and **when** are both required)
+  - bills exactly one unit at the expense's amount
+  - isn't on another invoice or twice on this one (also enforced by a
+    partial unique index)
+- Once an expense is on any invoice, its amount and rebill client can't
+  change and it can't be deleted. Triggers enforce this for issued invoices,
+  and the foreign key from `line_items` stops deleting one on a draft. To
+  change one on a draft, remove the line first.
+- **Limitation:** a reimbursement stays billed even if its invoice is
+  credited, so it can't be put on a corrected invoice. Re-billing it needs a
+  rule for credited reimbursements that isn't designed yet.
+- Duplicating an invoice leaves out its reimbursement lines.
+- **Billing period** (one-off, monthly, quarterly, annual) is descriptive. On
+  the cash basis each payment is its own expense, so `u` copies one to the
+  next period's date, keeping the approval and clearing the receipt. Dates
+  are clamped to the month end, so copying from 31 January gives 28
+  February, and then 28 March.
+- **Receipts:** a file path given on the expense form is copied to
+  `<output>/receipts/<year>/<paid date>_<supplier invoice no.>.<ext>` (or
+  the description, cut to 40 characters, if there's no number). The
+  original file name is never used, and an existing receipt is never
+  overwritten. The path is stored relative to the output folder and must
+  stay inside it, and the original file isn't needed again.
+  After an invoice is issued, or `R` regenerates it, earlier copies are
+  removed and the receipts its reimbursements have *now* are copied next to
+  the PDF as `<pdf name>_receipt-N.<ext>`. This happens after the commit: a
+  missing receipt is reported, but it doesn't stop the invoice being issued.
+- Migration 4 adds the expense columns, `expense_id` and `detail` on both
+  line tables (credit notes don't set `expense_id` yet), the unique index
+  and the triggers.
+
 ### Aging
 
 Outstanding invoices are grouped by days past the due date: not yet due,
@@ -204,6 +261,9 @@ Outstanding invoices are grouped by days past the due date: not yet due,
 | **Structured address fields, not a multi-line text area** | `tui-textarea` doesn't support ratatui 0.30. Separate fields also give cleaner PDFs. |
 | **Credit notes from the TUI have one line** | The data model and PDF support several lines. The UI keeps the common case (one amount plus a reason) quick. |
 | **Notes are single-line** | Same reason: `tui-input` is single-line. Long notes wrap on the PDF. |
+| **Reimbursements are recharges, linked to expenses** | One record of each purchase feeds both the tax estimate and the invoice, and a purchase can't be billed twice or silently changed after billing. |
+| **Receipts are copied, not merged into the PDF** | The Typst sandbox only reads `/data.json`, which keeps templates repeatable. A separate file next to the invoice is just as easy to attach and stays exactly as the supplier issued it. |
+| **Reimbursement approval is required before billing** | The client agreed to pay for it; recording who and when settles a dispute before it starts. |
 | **Backups on quit** | Automatic, with no background process. `tally backup` is there for scripts. |
 
 ## Testing
@@ -217,4 +277,5 @@ Outstanding invoices are grouped by days past the due date: not yet due,
   reported with line numbers.
 - `ui/form`, `ui/business_form`: form navigation and validation.
 - `tests/workflow.rs`: the whole life cycle with real PDFs, cash-basis income
-  across a tax-year boundary, CSV export and backup.
+  across a tax-year boundary, CSV export and backup; a reimbursed
+  subscription with an attached receipt, from approval to issue.

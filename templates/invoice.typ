@@ -17,6 +17,10 @@
 #set page(
   paper: "a4",
   margin: (x: 2cm, top: 2cm, bottom: 2.4cm),
+  // Draft previews are watermarked so they can't pass for an issued invoice.
+  background: if data.draft {
+    rotate(-30deg, text(110pt, weight: "bold", fill: luma(232), tracking: 0.1em, "DRAFT"))
+  },
   footer: context {
     set text(8pt, fill: muted)
     data.business.name
@@ -59,6 +63,7 @@
     #v(1pt)
     #text(weight: "bold", data.client.name) \
     #if data.client.contact != "" [#data.client.contact \ ]
+    #if data.client.email != "" [#data.client.email \ ]
     #for l in data.client.address [#l \ ]
     #if data.client.tax_id != "" {
       v(0.3em)
@@ -88,7 +93,10 @@
   inset: (x: 5pt, y: 7pt),
   stroke: (_, y) => if y == 0 { (bottom: 0.8pt + black) } else { (bottom: hairline) },
   table.header(caps[Description], caps[Quantity], caps[Rate], caps[Amount]),
-  ..data.lines.map(l => (l.description, l.quantity, l.rate, l.amount)).flatten(),
+  ..data.lines.map(l => (
+    if l.detail == "" { l.description } else [#l.description \ #text(8.5pt, fill: muted, l.detail)],
+    l.quantity, l.rate, l.amount,
+  )).flatten(),
 )
 
 #v(0.4em)

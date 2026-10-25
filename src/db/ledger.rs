@@ -237,12 +237,12 @@ mod tests {
     }
 
     fn credit_line(pence: i64) -> Vec<LineItem> {
-        vec![LineItem {
-            kind: LineKind::Fixed,
-            description: "Credit".into(),
-            quantity: Quantity::ONE,
-            unit_price: Money::from_pence(pence),
-        }]
+        vec![LineItem::new(
+            LineKind::Fixed,
+            "Credit",
+            Quantity::ONE,
+            Money::from_pence(pence),
+        )]
     }
 
     fn issued(db: &Db, client: i64) -> Invoice {

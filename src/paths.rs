@@ -2,8 +2,8 @@
 //!
 //! - The live database stays on this Mac (`~/Library/Application Support/tally/`),
 //!   because sync services can corrupt an SQLite file by copying it mid-write.
-//! - PDFs, backups, CSV exports and the optional `template.typ` go in the
-//!   (synced) output folder chosen during setup.
+//! - PDFs, receipts, backups, CSV exports and the optional `template.typ` go
+//!   in the (synced) output folder chosen during setup.
 
 use std::path::{Path, PathBuf};
 
@@ -64,6 +64,33 @@ pub fn backups_dir(output_dir: &Path) -> PathBuf {
 
 pub fn exports_dir(output_dir: &Path) -> PathBuf {
     output_dir.join("exports")
+}
+
+/// Copies of supplier receipts attached to expenses.
+pub fn receipts_dir(output_dir: &Path) -> PathBuf {
+    output_dir.join("receipts")
+}
+
+/// Draft previews go in the system temp folder, never the output folder:
+/// `$TMPDIR/tally-preview/draft-12.pdf` (`draft-new.pdf` if unsaved).
+pub fn preview_pdf(invoice_id: i64) -> PathBuf {
+    let name = if invoice_id == 0 {
+        "draft-new.pdf".to_string()
+    } else {
+        format!("draft-{invoice_id}.pdf")
+    };
+    std::env::temp_dir().join("tally-preview").join(name)
+}
+
+/// `<output>/2026/2026-0001_Acme-Ltd_receipt-1.pdf`, next to the invoice PDF.
+pub fn invoice_receipt(output_dir: &Path, invoice: &Invoice, n: usize, ext: &str) -> PathBuf {
+    let pdf = invoice_pdf(output_dir, invoice);
+    let stem = pdf
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("invoice")
+        .to_string();
+    pdf.with_file_name(format!("{stem}_receipt-{n}{ext}"))
 }
 
 /// `<output>/2026/2026-0001_Acme-Ltd.pdf`

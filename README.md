@@ -41,6 +41,19 @@ embedded [Typst](https://typst.app) compiler. No external tools are needed.
   under the Late Payment of Commercial Debts Act).
 - **Expenses** grouped by the Self Assessment categories, with totals per tax
   year ready for your return.
+- **Reimbursed equipment and software:**
+  - mark an expense as rebilled to a client, and record who approved it and
+    when
+  - set a billing period (one-off, monthly, quarterly or annual); `u` adds
+    the next payment of a subscription
+  - store the supplier's invoice number, and optionally attach the receipt
+    file, which is copied into your output folder
+  - add it to an invoice with `r` in the editor. The line prints the
+    approval and supplier invoice number, and issuing places the receipts
+    next to the invoice PDF, ready to attach to the same email. Each
+    purchase can be billed only once.
+- **Invoice notes**, printed under the payment details. New invoices start
+  with the default notes from Settings.
 - **Tax estimate:**
   - income tax, Class 4 and Class 2 National Insurance, and student loan
     repayments, each marked required, optional or not payable
@@ -98,7 +111,9 @@ were issued with.
 | Add a client | `3`, then `n` (give them a label if your number pattern uses `{LABEL}`) |
 | Start an invoice | `n` on the Dashboard or Invoices tab, or `i` on a client |
 | Add or edit lines | in the editor, move down past *Notes* into Lines; `a` adds, `Enter` edits, `d` deletes, `K`/`J` reorder |
+| Bill a reimbursed purchase | in the editor's Lines, `r` picks an approved, unbilled expense for that client |
 | Save a draft | `Ctrl+S` |
+| Preview a draft as a PDF | `Ctrl+P` in the editor (includes unsaved edits), or `o` on a draft. Nothing is saved or numbered |
 | Issue (number + PDF + lock) | `i` on the draft |
 | Mark as sent | `s` |
 | Record a payment | `p` (pre-filled with the balance) |
@@ -106,7 +121,9 @@ were issued with.
 | Refund an overpayment or credit | `r` (only offered when money is owed back) |
 | Open or regenerate the PDF | `o` / `R` |
 | Duplicate an invoice as a new draft | `u` |
-| Record an expense | `4`, then `n` (`←`/`→` changes tax year) |
+| Record an expense | `4`, then `n` (`←`/`→` changes tax year). Set *Rebill to* for a purchase a client reimburses |
+| Next payment of a subscription | `u` on the expense |
+| Open an expense's receipt | `o` on the expense |
 | Reports | `5`, then `Tab` to switch reports and `←`/`→` to change tax year |
 | Tax estimate | `5`, `Tab` to *Tax estimate*; `p` switches year to date / projected, `b` enters last year's bill |
 | Back up now | `Ctrl+B` in Settings, or `tally backup` |
@@ -139,6 +156,8 @@ things out.
 |---|---|
 | Database (live) | `~/Library/Application Support/tally/tally.db` |
 | Invoice and credit-note PDFs | `<output folder>/2026/2026-0001_Acme-Ltd.pdf` |
+| Receipts sent with an invoice | `<output folder>/2026/2026-0001_Acme-Ltd_receipt-1.pdf` |
+| Receipts attached to expenses | `<output folder>/receipts/2026/2026-10-03_<supplier invoice no.>.pdf` (or the description if there's no number) |
 | Backups (newest *n* kept) | `<output folder>/backups/tally-YYYYMMDD-HHMMSS.db` |
 | CSV exports | `<output folder>/exports/YYYYMMDD-HHMMSS/` |
 | Template override (optional) | `<output folder>/template.typ` |

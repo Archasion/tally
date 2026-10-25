@@ -22,8 +22,10 @@ pub const BUILTIN_TEMPLATE: &str = include_str!("../../templates/invoice.typ");
 pub struct DocumentData {
     /// `"invoice"` or `"credit_note"`.
     pub kind: &'static str,
-    /// `"INVOICE"` or `"CREDIT NOTE"`.
+    /// `"INVOICE"`, `"CREDIT NOTE"` or, for a preview, `"DRAFT INVOICE"`.
     pub title: &'static str,
+    /// A preview of a draft: not issued, and the number may change.
+    pub draft: bool,
     pub number: String,
     pub business: Party,
     /// `"Bill to"` or `"Credit to"`.
@@ -56,6 +58,8 @@ pub struct Party {
 #[derive(Debug, Clone, Serialize)]
 pub struct LineData {
     pub description: String,
+    /// Printed under the description, e.g. a reimbursement's approval; may be empty.
+    pub detail: String,
     pub quantity: String,
     pub rate: String,
     pub amount: String,
@@ -96,6 +100,7 @@ impl DocumentData {
         Ok(DocumentData {
             kind: "invoice",
             title: "INVOICE",
+            draft: false,
             number: number.clone(),
             business: business_party(snap),
             client_heading: "Bill to",
@@ -124,11 +129,25 @@ impl DocumentData {
         })
     }
 
+    /// A preview of a draft that has business and client details attached
+    /// (see `Db::preview_invoice`). `number` is the one it would get if
+    /// issued now, if known.
+    pub fn for_draft_preview(inv: &Invoice, number: Option<&str>) -> Result<Self> {
+        let mut inv = inv.clone();
+        let number = number.unwrap_or("not yet numbered");
+        inv.number = Some(number.to_string());
+        let mut data = Self::for_invoice(&inv)?;
+        data.title = "DRAFT INVOICE";
+        data.draft = true;
+        Ok(data)
+    }
+
     pub fn for_credit_note(note: &CreditNote, invoice: &Invoice) -> Self {
         let snap = &note.snapshot;
         DocumentData {
             kind: "credit_note",
             title: "CREDIT NOTE",
+            draft: false,
             number: note.number.clone(),
             business: business_party(snap),
             client_heading: "Credit to",
@@ -205,6 +224,7 @@ fn line_data(l: &LineItem) -> LineData {
     let unit = l.kind.unit(l.quantity);
     LineData {
         description: l.description.clone(),
+        detail: l.detail.clone(),
         quantity: if unit.is_empty() {
             l.quantity.to_string()
         } else {
@@ -298,6 +318,19 @@ impl Renderer {
         Ok(path)
     }
 
+    /// Writes a draft preview to a temporary folder outside the output
+    /// folder, so it's never synced or mistaken for an issued invoice.
+    pub fn write_preview(&self, preview: &crate::db::Preview) -> Result<PathBuf> {
+        let data =
+            DocumentData::for_draft_preview(&preview.invoice, preview.number.as_deref().ok())?;
+        let path = paths::preview_pdf(preview.invoice.id);
+        if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
+        }
+        write_atomically(&path, &self.render(&data)?)?;
+        Ok(path)
+    }
+
     pub fn write_credit_note(
         &self,
         output_dir: &Path,
@@ -354,6 +387,7 @@ pub fn sample_invoice() -> Invoice {
     let mut client = Client::new_empty();
     client.name = "Example Client Ltd".into();
     client.contact_name = "Accounts Payable".into();
+    client.email = "accounts@example-client.co.uk".into();
     client.address = Address {
         line1: "2 Market Square".into(),
         line2: "Suite 4".into(),
@@ -378,23 +412,35 @@ pub fn sample_invoice() -> Invoice {
         sent_on: None,
         snapshot: Some(Snapshot { business, client }),
         lines: vec![
+            LineItem::new(
+                LineKind::Days,
+                "Consultancy — discovery workshop",
+                Quantity::from_hundredths(200),
+                Money::from_pence(45_000),
+            ),
+            LineItem::new(
+                LineKind::Hours,
+                "Development and testing",
+                Quantity::from_hundredths(1_250),
+                Money::from_pence(6_000),
+            ),
+            LineItem::new(
+                LineKind::Fixed,
+                "Domain and hosting setup",
+                Quantity::ONE,
+                Money::from_pence(15_000),
+            ),
             LineItem {
-                kind: LineKind::Days,
-                description: "Consultancy — discovery workshop".into(),
-                quantity: Quantity::from_hundredths(200),
-                unit_price: Money::from_pence(45_000),
-            },
-            LineItem {
-                kind: LineKind::Hours,
-                description: "Development and testing".into(),
-                quantity: Quantity::from_hundredths(1_250),
-                unit_price: Money::from_pence(6_000),
-            },
-            LineItem {
-                kind: LineKind::Fixed,
-                description: "Domain and hosting setup".into(),
-                quantity: Quantity::ONE,
-                unit_price: Money::from_pence(15_000),
+                detail: "Monthly subscription, paid 3 September 2026 · Approved by Jo Smith on \
+                         1 September 2026 · Supplier invoice JB-2026-4471"
+                    .into(),
+                expense_id: Some(1),
+                ..LineItem::new(
+                    LineKind::Fixed,
+                    "Reimbursement: IDE licence",
+                    Quantity::ONE,
+                    Money::from_pence(2_490),
+                )
             },
         ],
     }
@@ -412,6 +458,25 @@ mod tests {
             .unwrap();
         assert!(pdf.starts_with(b"%PDF-"));
         assert!(pdf.len() > 1_000);
+    }
+
+    #[test]
+    fn renders_a_draft_preview() {
+        let mut inv = sample_invoice();
+        inv.number = None;
+        inv.issued_at = None;
+        let data = DocumentData::for_draft_preview(&inv, Some("EXC-2026-0002")).unwrap();
+        assert!(data.draft);
+        assert_eq!(data.title, "DRAFT INVOICE");
+        assert_eq!(data.number, "EXC-2026-0002");
+        assert!(
+            Renderer::builtin()
+                .render(&data)
+                .unwrap()
+                .starts_with(b"%PDF-")
+        );
+        let data = DocumentData::for_draft_preview(&inv, None).unwrap();
+        assert_eq!(data.number, "not yet numbered");
     }
 
     #[test]

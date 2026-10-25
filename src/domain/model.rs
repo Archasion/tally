@@ -160,11 +160,36 @@ pub struct LineItem {
     pub description: String,
     pub quantity: Quantity,
     pub unit_price: Money,
+    /// Extra text printed under the description; empty if none.
+    pub detail: String,
+    /// The expense this line bills back to the client (a reimbursement).
+    pub expense_id: Option<i64>,
 }
 
 impl LineItem {
+    /// An ordinary line with no detail and no linked expense.
+    pub fn new(
+        kind: LineKind,
+        description: impl Into<String>,
+        quantity: Quantity,
+        unit_price: Money,
+    ) -> Self {
+        LineItem {
+            kind,
+            description: description.into(),
+            quantity,
+            unit_price,
+            detail: String::new(),
+            expense_id: None,
+        }
+    }
+
     pub fn amount(&self) -> Money {
         self.quantity.times(self.unit_price)
+    }
+
+    pub fn is_reimbursement(&self) -> bool {
+        self.expense_id.is_some()
     }
 }
 

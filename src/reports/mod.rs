@@ -288,6 +288,12 @@ pub fn export_csv(db: &Db, output_dir: &Path, today: NaiveDate) -> Result<PathBu
     }
     w.flush()?;
 
+    let clients: HashMap<i64, String> = db
+        .clients(true)?
+        .into_iter()
+        .map(|c| (c.id, c.name))
+        .collect();
+    let billed = db.billed_expenses()?;
     let mut w = csv::Writer::from_path(dir.join("expenses.csv"))?;
     w.write_record([
         "date",
@@ -295,6 +301,13 @@ pub fn export_csv(db: &Db, output_dir: &Path, today: NaiveDate) -> Result<PathBu
         "category",
         "description",
         "amount",
+        "billing",
+        "rebill_to",
+        "approved_by",
+        "approved_on",
+        "billed_on_invoice",
+        "supplier_invoice",
+        "receipt_file",
         "notes",
     ])?;
     for e in db.expenses(None)? {
@@ -304,6 +317,15 @@ pub fn export_csv(db: &Db, output_dir: &Path, today: NaiveDate) -> Result<PathBu
             e.category.label().to_string(),
             e.description,
             e.amount.to_decimal_string(),
+            e.billing.label().to_string(),
+            e.rebill_client_id
+                .and_then(|id| clients.get(&id).cloned())
+                .unwrap_or_default(),
+            e.approved_by,
+            e.approved_on.map(|d| d.to_string()).unwrap_or_default(),
+            billed.get(&e.id).map(|b| b.display()).unwrap_or_default(),
+            e.receipt_ref,
+            e.receipt_file,
             e.notes,
         ])?;
     }

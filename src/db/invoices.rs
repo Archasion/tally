@@ -3,7 +3,7 @@ use chrono::{Days, NaiveDate, NaiveDateTime};
 use rusqlite::{Connection, OptionalExtension, Row, params};
 
 use super::{Db, json_column, line_from_row};
-use crate::domain::{Invoice, LineItem, Snapshot};
+use crate::domain::{Invoice, LineItem, Quantity, Snapshot};
 
 impl Db {
     /// All invoices, newest first, with their lines.
@@ -38,6 +38,7 @@ impl Db {
     /// Saves a new draft and returns its id. `inv.id` is ignored.
     pub fn create_draft(&self, inv: &Invoice) -> Result<i64> {
         validate_draft(inv)?;
+        self.validate_reimbursements(inv)?;
         let tx = self.conn.unchecked_transaction()?;
         tx.execute(
             "INSERT INTO invoices (client_id, issue_date, due_date, supply_start, supply_end, notes)
@@ -60,6 +61,7 @@ impl Db {
     /// Replaces a draft's header and lines. Fails if the invoice has been issued.
     pub fn update_draft(&self, inv: &Invoice) -> Result<()> {
         validate_draft(inv)?;
+        self.validate_reimbursements(inv)?;
         let tx = self.conn.unchecked_transaction()?;
         let issued: Option<Option<String>> = tx
             .query_row(
@@ -123,6 +125,8 @@ impl Db {
         if !inv.total().is_positive() {
             bail!("the invoice total must be more than £0.00");
         }
+        // The expense may have changed since the draft was saved.
+        self.validate_reimbursements(&inv)?;
         let business = self.require_business()?;
         let client = self.client(inv.client_id)?;
         let snapshot = Snapshot {
@@ -131,6 +135,16 @@ impl Db {
         };
 
         let tx = self.conn.unchecked_transaction()?;
+        // Freeze each reimbursement's detail as the expense stands now.
+        self.refresh_reimbursement_details(&mut inv.lines)?;
+        for (pos, line) in inv.lines.iter().enumerate() {
+            if line.is_reimbursement() {
+                tx.execute(
+                    "UPDATE line_items SET detail = ?3 WHERE invoice_id = ?1 AND position = ?2",
+                    params![id, pos as i64, line.detail],
+                )?;
+            }
+        }
         let number = Self::next_number(
             &tx,
             "invoice",
@@ -151,6 +165,30 @@ impl Db {
         Ok(inv)
     }
 
+    /// What a draft would look like if it were issued now, without saving
+    /// anything or using up a number. `inv` may have unsaved edits.
+    pub fn preview_invoice(&self, inv: &Invoice) -> Result<Preview> {
+        if !inv.is_draft() {
+            bail!("invoice {} is already issued", inv.display_number());
+        }
+        let business = self.require_business()?;
+        let client = self.client(inv.client_id)?;
+        let number = Self::peek_number(
+            &self.conn,
+            "invoice",
+            &business.invoice_pattern,
+            inv.issue_date,
+            &client,
+            |c, n| number_taken(c, "invoices", n),
+        )
+        .map(|(_, _, number)| number)
+        .map_err(|e| format!("{e:#}"));
+        let mut invoice = inv.clone();
+        self.refresh_reimbursement_details(&mut invoice.lines)?;
+        invoice.snapshot = Some(Snapshot { business, client });
+        Ok(Preview { invoice, number })
+    }
+
     /// Records (or with `None`, clears) the date an issued invoice was sent.
     pub fn set_sent(&self, id: i64, sent_on: Option<NaiveDate>) -> Result<()> {
         let inv = self.invoice(id)?;
@@ -165,8 +203,10 @@ impl Db {
     }
 
     /// Copies an invoice's client, lines and notes into a new draft dated `today`.
+    /// Reimbursement lines are left out: each purchase is billed only once.
     pub fn duplicate_invoice(&self, id: i64, today: NaiveDate) -> Result<i64> {
-        let src = self.invoice(id)?;
+        let mut src = self.invoice(id)?;
+        src.lines.retain(|l| !l.is_reimbursement());
         let terms = self.require_business()?.payment_terms_days;
         let copy = Invoice {
             id: 0,
@@ -183,6 +223,68 @@ impl Db {
             lines: src.lines,
         };
         self.create_draft(&copy)
+    }
+}
+
+/// A draft as it would be issued now. See [`Db::preview_invoice`].
+#[derive(Debug, Clone)]
+pub struct Preview {
+    /// The draft with today's business and client details attached; still unnumbered.
+    pub invoice: Invoice,
+    /// The number it would get, or why it can't get one yet.
+    pub number: Result<String, String>,
+}
+
+impl Db {
+    /// Sets each reimbursement line's detail from its expense as it is now.
+    fn refresh_reimbursement_details(&self, lines: &mut [LineItem]) -> Result<()> {
+        for line in lines {
+            if let Some(expense_id) = line.expense_id {
+                line.detail = self.expense(expense_id)?.invoice_detail();
+            }
+        }
+        Ok(())
+    }
+
+    /// Each reimbursement line must bill, at its exact amount, an approved
+    /// expense marked for this invoice's client that isn't on another invoice.
+    fn validate_reimbursements(&self, inv: &Invoice) -> Result<()> {
+        let mut seen = std::collections::HashSet::new();
+        for (i, line) in inv.lines.iter().enumerate() {
+            let Some(expense_id) = line.expense_id else {
+                continue;
+            };
+            let n = i + 1;
+            let e = self.expense(expense_id)?;
+            if !seen.insert(expense_id) {
+                bail!("line {n} ({}) is on this invoice twice", e.description);
+            }
+            if e.rebill_client_id != Some(inv.client_id) {
+                bail!(
+                    "line {n} ({}) is a reimbursement for a different client. Remove it, or change who it's rebilled to under Expenses",
+                    e.description
+                );
+            }
+            if !e.is_approved() {
+                bail!(
+                    "line {n} ({}) hasn't been approved. Record who approved it and when under Expenses",
+                    e.description
+                );
+            }
+            if line.quantity != Quantity::ONE || line.unit_price != e.amount {
+                bail!("line {n} must bill the expense's amount, {}", e.amount);
+            }
+            if let Some(billed) = super::tax::billed_on(&self.conn, expense_id)?
+                && billed.invoice_id != inv.id
+            {
+                bail!(
+                    "line {n} ({}) is already billed on {}",
+                    e.description,
+                    billed.display()
+                );
+            }
+        }
+        Ok(())
     }
 }
 
@@ -216,8 +318,9 @@ pub(super) fn insert_lines(
     lines: &[LineItem],
 ) -> Result<()> {
     let sql = format!(
-        "INSERT INTO {table} ({parent_col}, position, kind, description, quantity_centi, unit_price_pence)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6)"
+        "INSERT INTO {table} ({parent_col}, position, kind, description, quantity_centi, unit_price_pence,
+             detail, expense_id)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)"
     );
     let mut stmt = conn.prepare(&sql)?;
     for (pos, line) in lines.iter().enumerate() {
@@ -228,6 +331,8 @@ pub(super) fn insert_lines(
             line.description.trim(),
             line.quantity.hundredths(),
             line.unit_price.pence(),
+            line.detail.trim(),
+            line.expense_id,
         ])?;
     }
     Ok(())
@@ -285,18 +390,18 @@ pub(crate) mod tests {
             sent_on: None,
             snapshot: None,
             lines: vec![
-                LineItem {
-                    kind: LineKind::Hours,
-                    description: "Development".into(),
-                    quantity: Quantity::from_hundredths(750),
-                    unit_price: Money::from_pence(6000),
-                },
-                LineItem {
-                    kind: LineKind::Fixed,
-                    description: "Hosting setup".into(),
-                    quantity: Quantity::ONE,
-                    unit_price: Money::from_pence(15000),
-                },
+                LineItem::new(
+                    LineKind::Hours,
+                    "Development",
+                    Quantity::from_hundredths(750),
+                    Money::from_pence(6000),
+                ),
+                LineItem::new(
+                    LineKind::Fixed,
+                    "Hosting setup",
+                    Quantity::ONE,
+                    Money::from_pence(15000),
+                ),
             ],
         }
     }
@@ -534,6 +639,152 @@ pub(crate) mod tests {
         inv.lines.clear();
         let id = db.create_draft(&inv).unwrap();
         assert!(db.issue_invoice(id, now(), |_| Ok(())).is_err());
+    }
+
+    fn approved_reimbursement(db: &Db, client: i64) -> (i64, LineItem) {
+        let mut e = super::super::tax::tests::expense(2026, 10, 1, 120_000);
+        e.rebill_client_id = Some(client);
+        e.approved_by = "Jo Smith".into();
+        e.approved_on = Some(d(2026, 9, 28));
+        let id = db.save_expense(&e).unwrap();
+        let line = LineItem {
+            expense_id: Some(id),
+            detail: e.invoice_detail(),
+            ..LineItem::new(LineKind::Fixed, "Laptop", Quantity::ONE, e.amount)
+        };
+        (id, line)
+    }
+
+    #[test]
+    fn reimbursements_bill_once_at_their_amount_for_their_client() {
+        let (db, acme) = db_with_client();
+        let other = add_client(&db, "Logitech", "LGT");
+        let (expense, line) = approved_reimbursement(&db, acme);
+        let mut inv = draft(acme, d(2026, 10, 2));
+        inv.lines.push(line.clone());
+
+        let mut wrong = inv.clone();
+        wrong.client_id = other;
+        let err = db.create_draft(&wrong).unwrap_err();
+        assert!(err.to_string().contains("different client"), "{err}");
+        let mut wrong = inv.clone();
+        wrong.lines[2].unit_price = Money::from_pence(1);
+        assert!(db.create_draft(&wrong).is_err());
+
+        let id = db.create_draft(&inv).unwrap();
+        let saved = db.invoice(id).unwrap();
+        assert_eq!(saved.lines[2], line);
+        // Re-saving the same draft is fine; billing it on a second draft isn't.
+        db.update_draft(&saved).unwrap();
+        let err = db.create_draft(&inv).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains(&format!("already billed on draft #{id}")),
+            "{err}"
+        );
+        // While on a draft, the expense can't be deleted or have its amount changed.
+        assert!(db.delete_expense(expense).is_err());
+        let mut e = db.expense(expense).unwrap();
+        e.amount = Money::from_pence(1);
+        assert!(
+            db.save_expense(&e)
+                .unwrap_err()
+                .to_string()
+                .contains("Remove it from the draft")
+        );
+        // Remove it from the draft, and it's free again.
+        let mut saved = saved;
+        saved.lines.pop();
+        db.update_draft(&saved).unwrap();
+        db.save_expense(&e).unwrap();
+        assert_eq!(db.unbilled_reimbursements(acme, 0).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn issuing_rechecks_and_refreshes_reimbursements() {
+        let (db, acme) = db_with_client();
+        let (expense, line) = approved_reimbursement(&db, acme);
+        let mut inv = draft(acme, d(2026, 10, 2));
+        inv.lines.push(line.clone());
+        let mut twice = inv.clone();
+        twice.lines.push(line);
+        let err = db.create_draft(&twice).unwrap_err();
+        assert!(err.to_string().contains("on this invoice twice"), "{err}");
+
+        let id = db.create_draft(&inv).unwrap();
+        // Approval withdrawn after the draft was saved: issuing is refused.
+        let mut e = db.expense(expense).unwrap();
+        let approval = (e.approved_by.clone(), e.approved_on);
+        e.approved_by.clear();
+        e.approved_on = None;
+        db.save_expense(&e).unwrap();
+        let err = db.issue_invoice(id, now(), |_| Ok(())).unwrap_err();
+        assert!(err.to_string().contains("hasn't been approved"), "{err}");
+        // Re-approved with a supplier reference: the issued line shows it.
+        (e.approved_by, e.approved_on) = approval;
+        e.receipt_ref = "INV-9".into();
+        db.save_expense(&e).unwrap();
+        let issued = db.issue_invoice(id, now(), |_| Ok(())).unwrap();
+        assert!(issued.lines[2].detail.ends_with("Supplier invoice INV-9"));
+        assert_eq!(
+            db.invoice(id).unwrap().lines[2].detail,
+            issued.lines[2].detail
+        );
+    }
+
+    #[test]
+    fn previewing_changes_nothing() {
+        let (db, acme) = db_with_client();
+        let first = db.create_draft(&draft(acme, d(2026, 10, 2))).unwrap();
+        db.issue_invoice(first, now(), |_| Ok(())).unwrap();
+        let id = db.create_draft(&draft(acme, d(2026, 10, 3))).unwrap();
+        let before = db.invoice(id).unwrap();
+        let sequences = || -> Vec<(String, String, i64)> {
+            let mut stmt = db
+                .connection()
+                .prepare("SELECT * FROM sequences ORDER BY 1, 2")
+                .unwrap();
+            stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+                .unwrap()
+                .collect::<rusqlite::Result<_>>()
+                .unwrap()
+        };
+        let seq_before = sequences();
+
+        let p = db.preview_invoice(&before).unwrap();
+        assert_eq!(p.number.as_deref(), Ok("2026-0002"));
+        assert_eq!(
+            db.preview_invoice(&before).unwrap().number.as_deref(),
+            Ok("2026-0002")
+        );
+        assert_eq!(p.invoice.snapshot.as_ref().unwrap().client.name, "Acme Ltd");
+        assert!(p.invoice.number.is_none());
+        assert_eq!(db.invoice(id).unwrap(), before);
+        assert_eq!(sequences(), seq_before);
+        // Issuing afterwards gets the number the preview showed.
+        let issued = db.issue_invoice(id, now(), |_| Ok(())).unwrap();
+        assert_eq!(issued.number.as_deref(), Some("2026-0002"));
+        assert!(db.preview_invoice(&issued).is_err());
+    }
+
+    #[test]
+    fn preview_explains_a_missing_number() {
+        let (db, acme) = db_with_client();
+        use_label_pattern(&db);
+        let inv = draft(acme, d(2026, 10, 2));
+        let err = db.preview_invoice(&inv).unwrap().number.unwrap_err();
+        assert!(err.contains("Acme Ltd has no label"), "{err}");
+    }
+
+    #[test]
+    fn picker_includes_the_drafts_own_reimbursements() {
+        let (db, acme) = db_with_client();
+        let (_, line) = approved_reimbursement(&db, acme);
+        let mut inv = draft(acme, d(2026, 10, 2));
+        inv.lines.push(line);
+        let id = db.create_draft(&inv).unwrap();
+        assert!(db.unbilled_reimbursements(acme, 0).unwrap().is_empty());
+        assert_eq!(db.unbilled_reimbursements(acme, id).unwrap().len(), 1);
     }
 
     #[test]

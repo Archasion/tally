@@ -56,19 +56,22 @@ string. Money is already formatted (`£1,800.00`) and dates are written out
 | Field | Example | Notes |
 |---|---|---|
 | `kind` | `"invoice"` / `"credit_note"` | |
-| `title` | `"INVOICE"` / `"CREDIT NOTE"` | |
-| `number` | `"2026-0001"` or `"LGT-2026-0001"` | |
+| `title` | `"INVOICE"` / `"CREDIT NOTE"` | `"DRAFT INVOICE"` on a draft preview |
+| `draft` | `false` | `true` on a draft preview; the built-in template adds a DRAFT watermark |
+| `number` | `"2026-0001"` or `"LGT-2026-0001"` | on a preview, the number it would get if issued now, or `"not yet numbered"` |
 | `business.name` | `"Nick Reiners"` | |
 | `business.address` | `["1 High Street", "Bristol", "BS1 1AA"]` | blank lines removed |
 | `business.email`, `business.phone` | | may be `""` |
 | `client_heading` | `"Bill to"` / `"Credit to"` | |
 | `client.name` | `"Acme Ltd"` | as it was when issued |
 | `client.contact` | `"Accounts Payable"` | may be `""` |
+| `client.email` | `"accounts@acme.example"` | may be `""`; printed under the contact |
 | `client.address` | `["Hauptstraße 1", "Berlin", "10115", "Germany"]` | always ends with the country |
 | `client.tax_id` | `"VAT ID: DE123456789"` | `""` if the client has no tax ID |
 | `meta` | `[["Invoice date", "30 September 2026"], ["Supply period", "1–30 September 2026"], ["Due date", "30 October 2026"]]` | label/value pairs; a credit note also lists the invoice it's against |
 | `reason` | `"Hosting cancelled"` | credit notes only, otherwise `""` |
-| `lines` | `[{description, quantity, rate, amount}]` | e.g. `"12.5 hrs"`, `"£60.00/hr"`, `"£750.00"` |
+| `lines` | `[{description, detail, quantity, rate, amount}]` | e.g. `"12.5 hrs"`, `"£60.00/hr"`, `"£750.00"` |
+| `lines[].detail` | `"Monthly subscription, paid 3 October 2026 · Approved by Jo Smith on 1 October 2026 · Supplier invoice JB-4471"` | smaller text under the description; `""` except on reimbursements |
 | `total_label` | `"Total due"` / `"Total credited"` | |
 | `total` | `"£1,800.00"` | |
 | `payment` | `{account_name, sort_code, account_number, reference, terms}` or `none` | `none` on credit notes; `reference` is the invoice number |

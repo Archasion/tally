@@ -6,7 +6,9 @@ mod invoices;
 mod ledger;
 mod tax;
 
+pub use invoices::Preview;
 pub use ledger::TxKind;
+pub use tax::Billed;
 
 use std::path::Path;
 
@@ -22,6 +24,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("schema.sql"),
     include_str!("002_international_clients.sql"),
     include_str!("003_expenses_and_tax.sql"),
+    include_str!("004_reimbursements.sql"),
 ];
 
 pub struct Db {
@@ -144,6 +147,25 @@ impl Db {
         client: &Client,
         taken: impl Fn(&Connection, &str) -> Result<bool>,
     ) -> Result<String> {
+        let (scope, seq, number) = Self::peek_number(conn, kind, pattern, date, client, taken)?;
+        conn.execute(
+            "INSERT INTO sequences (kind, scope, last) VALUES (?1, ?2, ?3)
+             ON CONFLICT (kind, scope) DO UPDATE SET last = excluded.last",
+            params![kind, scope, seq],
+        )?;
+        Ok(number)
+    }
+
+    /// The number `next_number` would give out now, with its scope and
+    /// sequence, without reserving it. Reads only.
+    fn peek_number(
+        conn: &Connection,
+        kind: &str,
+        pattern: &str,
+        date: NaiveDate,
+        client: &Client,
+        taken: impl Fn(&Connection, &str) -> Result<bool>,
+    ) -> Result<(String, u32, String)> {
         let pattern = NumberPattern::parse(pattern).map_err(anyhow::Error::msg)?;
         let label = client.label.as_str();
         if pattern.uses_label() && label.is_empty() {
@@ -167,12 +189,7 @@ impl Db {
             seq += 1;
             number = pattern.render(seq, date, label);
         }
-        conn.execute(
-            "INSERT INTO sequences (kind, scope, last) VALUES (?1, ?2, ?3)
-             ON CONFLICT (kind, scope) DO UPDATE SET last = excluded.last",
-            params![kind, scope, seq],
-        )?;
-        Ok(number)
+        Ok((scope, seq, number))
     }
 }
 
@@ -209,6 +226,8 @@ fn line_from_row(r: &Row) -> rusqlite::Result<LineItem> {
         description: r.get("description")?,
         quantity: Quantity::from_hundredths(r.get("quantity_centi")?),
         unit_price: Money::from_pence(r.get("unit_price_pence")?),
+        detail: r.get("detail")?,
+        expense_id: r.get("expense_id")?,
     })
 }
 

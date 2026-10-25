@@ -1,8 +1,8 @@
 //! Business expenses, recorded on the cash basis (by the date paid).
 
-use chrono::NaiveDate;
+use chrono::{Months, NaiveDate};
 
-use super::Money;
+use super::{Money, dates};
 
 /// Allowable-expense categories as on the Self Assessment full
 /// self-employment pages (SA103F). Depreciation and bad debts are left out:
@@ -131,6 +131,69 @@ impl ExpenseCategory {
     }
 }
 
+/// How often a purchase is paid for: equipment is usually one-off, software
+/// often a subscription.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BillingPeriod {
+    OneOff,
+    Monthly,
+    Quarterly,
+    Annual,
+}
+
+impl BillingPeriod {
+    pub const ALL: [BillingPeriod; 4] = [
+        BillingPeriod::OneOff,
+        BillingPeriod::Monthly,
+        BillingPeriod::Quarterly,
+        BillingPeriod::Annual,
+    ];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            BillingPeriod::OneOff => "one_off",
+            BillingPeriod::Monthly => "monthly",
+            BillingPeriod::Quarterly => "quarterly",
+            BillingPeriod::Annual => "annual",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|b| b.as_str() == s)
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            BillingPeriod::OneOff => "One-off",
+            BillingPeriod::Monthly => "Monthly",
+            BillingPeriod::Quarterly => "Quarterly",
+            BillingPeriod::Annual => "Annual",
+        }
+    }
+
+    /// As printed on an invoice line.
+    pub fn describe(self) -> &'static str {
+        match self {
+            BillingPeriod::OneOff => "One-off purchase",
+            BillingPeriod::Monthly => "Monthly subscription",
+            BillingPeriod::Quarterly => "Quarterly subscription",
+            BillingPeriod::Annual => "Annual subscription",
+        }
+    }
+
+    /// The date of the next payment, or `None` for one-off purchases.
+    /// Month ends are clamped, so 31 January is followed by 28/29 February.
+    pub fn next_date(self, date: NaiveDate) -> Option<NaiveDate> {
+        let months = match self {
+            BillingPeriod::OneOff => return None,
+            BillingPeriod::Monthly => 1,
+            BillingPeriod::Quarterly => 3,
+            BillingPeriod::Annual => 12,
+        };
+        date.checked_add_months(Months::new(months))
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Expense {
     pub id: i64,
@@ -140,6 +203,74 @@ pub struct Expense {
     pub category: ExpenseCategory,
     pub amount: Money,
     pub notes: String,
+    pub billing: BillingPeriod,
+    /// The client who reimburses this purchase, if any. It's still your
+    /// expense; the reimbursement is income when the invoice is paid.
+    pub rebill_client_id: Option<i64>,
+    /// Who approved the purchase on the client's side, and when.
+    pub approved_by: String,
+    pub approved_on: Option<NaiveDate>,
+    /// The supplier's invoice or receipt number.
+    pub receipt_ref: String,
+    /// A copy of the receipt, relative to the output folder; empty if none.
+    pub receipt_file: String,
+}
+
+impl Expense {
+    pub fn new(date: NaiveDate) -> Self {
+        Expense {
+            id: 0,
+            date,
+            description: String::new(),
+            category: ExpenseCategory::Other,
+            amount: Money::ZERO,
+            notes: String::new(),
+            billing: BillingPeriod::OneOff,
+            rebill_client_id: None,
+            approved_by: String::new(),
+            approved_on: None,
+            receipt_ref: String::new(),
+            receipt_file: String::new(),
+        }
+    }
+
+    pub fn is_approved(&self) -> bool {
+        !self.approved_by.trim().is_empty() && self.approved_on.is_some()
+    }
+
+    /// The text printed under the line when this is billed to a client, e.g.
+    /// `Monthly subscription, paid 3 October 2026 · Approved by Jo Smith on
+    /// 1 October 2026 · Supplier invoice INV-123`.
+    pub fn invoice_detail(&self) -> String {
+        let mut parts = vec![format!(
+            "{}, paid {}",
+            self.billing.describe(),
+            dates::long(self.date)
+        )];
+        if let Some(on) = self.approved_on {
+            parts.push(format!(
+                "Approved by {} on {}",
+                self.approved_by.trim(),
+                dates::long(on)
+            ));
+        }
+        if !self.receipt_ref.trim().is_empty() {
+            parts.push(format!("Supplier invoice {}", self.receipt_ref.trim()));
+        }
+        parts.join(" · ")
+    }
+
+    /// A copy for the next billing period: same details and approval, the
+    /// next payment date, and no receipt yet. `None` for one-off purchases.
+    pub fn next_period(&self) -> Option<Expense> {
+        Some(Expense {
+            id: 0,
+            date: self.billing.next_date(self.date)?,
+            receipt_ref: String::new(),
+            receipt_file: String::new(),
+            ..self.clone()
+        })
+    }
 }
 
 #[cfg(test)]
@@ -151,5 +282,59 @@ mod tests {
         for c in ExpenseCategory::ALL {
             assert_eq!(ExpenseCategory::parse(c.as_str()), Some(c));
         }
+        for b in BillingPeriod::ALL {
+            assert_eq!(BillingPeriod::parse(b.as_str()), Some(b));
+        }
+    }
+
+    fn d(y: i32, m: u32, day: u32) -> NaiveDate {
+        NaiveDate::from_ymd_opt(y, m, day).unwrap()
+    }
+
+    #[test]
+    fn next_period_dates_clamp_to_month_end() {
+        assert_eq!(BillingPeriod::OneOff.next_date(d(2026, 1, 31)), None);
+        assert_eq!(
+            BillingPeriod::Monthly.next_date(d(2026, 1, 31)),
+            Some(d(2026, 2, 28))
+        );
+        assert_eq!(
+            BillingPeriod::Quarterly.next_date(d(2026, 11, 30)),
+            Some(d(2027, 2, 28))
+        );
+        assert_eq!(
+            BillingPeriod::Annual.next_date(d(2028, 2, 29)),
+            Some(d(2029, 2, 28))
+        );
+    }
+
+    #[test]
+    fn invoice_detail_and_next_period() {
+        let mut e = Expense::new(d(2026, 10, 3));
+        e.description = "IDE licence".into();
+        e.amount = Money::from_pence(2_490);
+        e.billing = BillingPeriod::Monthly;
+        e.rebill_client_id = Some(1);
+        assert!(!e.is_approved());
+        assert_eq!(
+            e.invoice_detail(),
+            "Monthly subscription, paid 3 October 2026"
+        );
+        e.approved_by = "Jo Smith".into();
+        e.approved_on = Some(d(2026, 10, 1));
+        e.receipt_ref = "INV-123".into();
+        e.receipt_file = "receipts/2026/x.pdf".into();
+        assert!(e.is_approved());
+        assert_eq!(
+            e.invoice_detail(),
+            "Monthly subscription, paid 3 October 2026 · Approved by Jo Smith on 1 October 2026 · Supplier invoice INV-123"
+        );
+        let next = e.next_period().unwrap();
+        assert_eq!(next.date, d(2026, 11, 3));
+        assert_eq!(next.approved_by, "Jo Smith");
+        assert_eq!(next.receipt_ref, "");
+        assert_eq!(next.receipt_file, "");
+        e.billing = BillingPeriod::OneOff;
+        assert!(e.next_period().is_none());
     }
 }

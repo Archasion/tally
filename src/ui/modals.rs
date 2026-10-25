@@ -10,7 +10,7 @@ use super::form::{Form, Outcome};
 use super::{App, Modal, Screen, centered, popup_block, render_popup_text};
 use crate::db::TxKind;
 use crate::domain::dates::TaxYear;
-use crate::domain::expense::{Expense, ExpenseCategory};
+use crate::domain::expense::{BillingPeriod, Expense, ExpenseCategory};
 use crate::domain::{Address, Client, LineItem, LineKind, Money, Quantity, Transaction, dates};
 
 /// What a pop-up form is for.
@@ -26,6 +26,10 @@ pub enum Purpose {
     Line(Option<usize>),
     NewExpense,
     EditExpense(i64),
+    /// A new expense for the next payment of a recurring one.
+    NextPayment(i64),
+    /// Pick a rebillable expense to add to the draft in the editor.
+    Reimbursement,
     /// Income tax + Class 4 for a tax year, from an HMRC statement.
     PriorBill(TaxYear),
 }
@@ -149,6 +153,28 @@ pub fn line_form(
     }
 }
 
+fn reimbursement_label(e: &Expense) -> String {
+    let flag = if e.is_approved() {
+        ""
+    } else {
+        "  (not approved)"
+    };
+    format!(
+        "{}  {}  {}{flag}",
+        dates::short(e.date),
+        e.description,
+        e.amount
+    )
+}
+
+fn reimbursement_hint(e: &Expense) -> String {
+    if e.is_approved() {
+        e.invoice_detail()
+    } else {
+        "Not approved yet: record who approved it and when under Expenses (4)".into()
+    }
+}
+
 fn money_field(form: &mut Form, key: &str, allow_zero: bool) -> Option<Money> {
     match Money::parse(&form.value(key)) {
         Ok(m) if m.is_positive() || (allow_zero && m.is_zero()) => Some(m),
@@ -243,21 +269,31 @@ impl App {
                         .hint("Clear the date and save to mark it as not sent"),
                 )
             }
-            Purpose::NewExpense | Purpose::EditExpense(_) => {
-                let existing = match purpose {
-                    Purpose::EditExpense(id) => self.db.expense(id).ok(),
-                    _ => None,
+            Purpose::NewExpense | Purpose::EditExpense(_) | Purpose::NextPayment(_) => {
+                let (title, e) = match purpose {
+                    Purpose::EditExpense(id) => match self.db.expense(id) {
+                        Ok(e) => ("Edit expense".to_string(), e),
+                        Err(e) => return self.error(&e),
+                    },
+                    Purpose::NextPayment(id) => match self.db.expense(id).map(|e| e.next_period()) {
+                        Ok(Some(e)) => (format!("Next {} payment", e.billing.label().to_lowercase()), e),
+                        Ok(None) => return self.info("That's a one-off purchase. Set a billing period to repeat it"),
+                        Err(e) => return self.error(&e),
+                    },
+                    _ => ("New expense".to_string(), Expense::new(dates::today())),
                 };
-                let category = existing.as_ref().map(|e| e.category).unwrap_or(ExpenseCategory::Other);
-                let index = ExpenseCategory::ALL.iter().position(|c| *c == category).unwrap_or(0);
-                let title = if existing.is_some() { "Edit expense" } else { "New expense" };
+                let index = ExpenseCategory::ALL.iter().position(|c| *c == e.category).unwrap_or(0);
+                let billing = BillingPeriod::ALL.iter().position(|b| *b == e.billing).unwrap_or(0);
+                let rebill = self.rebill_choices(e.rebill_client_id);
+                let rebill_index = rebill.iter().position(|(id, _)| *id == e.rebill_client_id).unwrap_or(0);
+                let amount = if e.amount.is_zero() { String::new() } else { e.amount.to_decimal_string() };
                 (
-                    title.to_string(),
+                    title,
                     Form::new()
-                        .text("date", "Date paid", existing.as_ref().map(|e| e.date.to_string()).unwrap_or(today))
+                        .text("date", "Date paid", e.date.to_string())
                         .required()
                         .hint("The date the money left your account (cash basis)")
-                        .text("description", "Description", existing.as_ref().map(|e| e.description.clone()).unwrap_or_default())
+                        .text("description", "Description", e.description)
                         .required()
                         .choice(
                             "category",
@@ -265,12 +301,54 @@ impl App {
                             ExpenseCategory::ALL.iter().map(|c| c.label().to_string()).collect(),
                             index,
                         )
-                        .hint(ExpenseCategory::ALL[index].hint())
-                        .text("amount", "Amount (£)", existing.as_ref().map(|e| e.amount.to_decimal_string()).unwrap_or_default())
+                        .overview(
+                            ExpenseCategory::ALL
+                                .iter()
+                                .map(|c| (c.short().to_string(), c.hint().to_string()))
+                                .collect(),
+                        )
+                        .hint("Self Assessment category; all of them are listed on the right")
+                        .text("amount", "Amount (£)", amount)
                         .required()
                         .hint("The business part only, if it was partly personal")
-                        .text("notes", "Notes", existing.map(|e| e.notes).unwrap_or_default())
-                        .hint("Optional, e.g. receipt reference"),
+                        .choice(
+                            "billing",
+                            "Billing period",
+                            BillingPeriod::ALL.iter().map(|b| b.label().to_string()).collect(),
+                            billing,
+                        )
+                        .hint("How often you pay. For subscriptions, u on the list adds the next payment")
+                        .choice("rebill", "Rebill to", rebill.into_iter().map(|(_, name)| name).collect(), rebill_index)
+                        .hint("A client who reimburses this. It stays your expense; their payment is income")
+                        .text("approved_by", "Approved by", e.approved_by)
+                        .hint("Who agreed to it at the client, e.g. Jo Smith (Engineering Manager)")
+                        .text("approved_on", "Approved on", e.approved_on.map(|d| d.to_string()).unwrap_or_default())
+                        .hint("When they agreed. Needed before it can go on an invoice")
+                        .text("receipt_ref", "Supplier invoice no.", e.receipt_ref)
+                        .hint("The supplier's invoice or receipt number; printed on your invoice")
+                        .text("receipt_file", "Receipt file", e.receipt_file)
+                        .hint("Optional path, e.g. ~/Downloads/receipt.pdf. Copied into receipts/ in your output folder")
+                        .text("notes", "Notes", e.notes)
+                        .hint("Optional; for you only, never printed"),
+                )
+            }
+            Purpose::Reimbursement => {
+                let options = match self.reimbursement_options() {
+                    Ok(o) => o,
+                    Err(e) => return self.error(&e),
+                };
+                let Some(first) = options.first() else {
+                    let client = self.editor_client_name();
+                    return self.info(format!(
+                        "Nothing to rebill to {client}. Add the purchase under Expenses (4) with 'Rebill to' set to them"
+                    ));
+                };
+                let hint = reimbursement_hint(first);
+                (
+                    "Add reimbursement".to_string(),
+                    Form::new()
+                        .choice("expense", "Purchase", options.iter().map(reimbursement_label).collect(), 0)
+                        .hint(&hint),
                 )
             }
             Purpose::PriorBill(year) => {
@@ -339,14 +417,16 @@ impl App {
                     Ok(())
                 }
                 outcome => {
-                    // Keep the category hint in step with the selected category.
+                    // Keep the picker's hint in step with the selected purchase.
                     if outcome == Outcome::Changed
-                        && matches!(purpose, Purpose::NewExpense | Purpose::EditExpense(_))
-                        && form.focused_key() == "category"
+                        && purpose == Purpose::Reimbursement
+                        && let Some(hint) = self
+                            .reimbursement_options()
+                            .ok()
+                            .and_then(|o| o.get(form.selected("expense")).map(reimbursement_hint))
                     {
-                        let hint = ExpenseCategory::ALL[form.selected("category")].hint();
                         let focus = form.focus;
-                        form.fields[focus].hint = hint.to_string();
+                        form.fields[focus].hint = hint;
                     }
                     self.modal = Some(Modal::Form {
                         title,
@@ -486,12 +566,12 @@ impl App {
                 let Some(amount) = money_field(form, "amount", false) else {
                     return Ok(false);
                 };
-                let line = LineItem {
-                    kind: LineKind::Fixed,
-                    description: form.value("description"),
-                    quantity: Quantity::ONE,
-                    unit_price: amount,
-                };
+                let line = LineItem::new(
+                    LineKind::Fixed,
+                    form.value("description"),
+                    Quantity::ONE,
+                    amount,
+                );
                 let out = self.output_dir();
                 self.renderer()?;
                 let renderer = self.renderer.as_ref().expect("initialised above");
@@ -537,32 +617,128 @@ impl App {
                     None => "Marked as not sent".to_string(),
                 });
             }
-            Purpose::NewExpense | Purpose::EditExpense(_) => {
+            Purpose::NewExpense | Purpose::EditExpense(_) | Purpose::NextPayment(_) => {
                 let Some(date) = date_field(form, "date") else {
                     return Ok(false);
                 };
                 let Some(amount) = money_field(form, "amount", false) else {
                     return Ok(false);
                 };
-                let expense = Expense {
-                    id: match purpose {
-                        Purpose::EditExpense(id) => id,
-                        _ => 0,
+                let approved_on = match form.value("approved_on").as_str() {
+                    "" => None,
+                    _ => match date_field(form, "approved_on") {
+                        Some(d) => Some(d),
+                        None => return Ok(false),
                     },
+                };
+                let approved_by = form.value("approved_by");
+                match (approved_by.is_empty(), approved_on.is_none()) {
+                    (false, true) => {
+                        form.fail("approved_on", "Enter when it was approved");
+                        return Ok(false);
+                    }
+                    (true, false) => {
+                        form.fail("approved_by", "Enter who approved it");
+                        return Ok(false);
+                    }
+                    _ => {}
+                }
+                let existing = match purpose {
+                    Purpose::EditExpense(id) => Some(self.db.expense(id)?),
+                    _ => None,
+                };
+                let stored_receipt = existing
+                    .as_ref()
+                    .map(|e| e.receipt_file.clone())
+                    .unwrap_or_default();
+                // The client the form was opened with, so the choices match.
+                let opened_with = match purpose {
+                    Purpose::EditExpense(id) | Purpose::NextPayment(id) => {
+                        self.db.expense(id)?.rebill_client_id
+                    }
+                    _ => None,
+                };
+                let rebill_client_id = self
+                    .rebill_choices(opened_with)
+                    .get(form.selected("rebill"))
+                    .and_then(|(id, _)| *id);
+                let mut expense = Expense {
+                    id: existing.as_ref().map(|e| e.id).unwrap_or(0),
                     date,
                     description: form.value("description"),
                     category: ExpenseCategory::ALL[form.selected("category")],
                     amount,
                     notes: form.value("notes"),
+                    billing: BillingPeriod::ALL[form.selected("billing")],
+                    rebill_client_id,
+                    approved_by,
+                    approved_on,
+                    receipt_ref: form.value("receipt_ref"),
+                    receipt_file: stored_receipt.clone(),
                 };
-                self.db.save_expense(&expense)?;
+                // A new path is copied in; the stored one (or blank) is kept as is.
+                let receipt = form.value("receipt_file");
+                if receipt.is_empty() {
+                    expense.receipt_file.clear();
+                } else if receipt != stored_receipt {
+                    match crate::receipts::import(
+                        &self.output_dir(),
+                        &crate::paths::expand_home(&receipt),
+                        &expense,
+                    ) {
+                        Ok(stored) => expense.receipt_file = stored,
+                        Err(e) => {
+                            form.fail("receipt_file", format!("{e:#}"));
+                            return Ok(false);
+                        }
+                    }
+                }
+                if let Err(e) = self.db.save_expense(&expense) {
+                    // Don't leave a copy behind for a save that didn't happen.
+                    if expense.receipt_file != stored_receipt
+                        && let Ok(copy) =
+                            crate::receipts::resolve(&self.output_dir(), &expense.receipt_file)
+                    {
+                        let _ = std::fs::remove_file(copy);
+                    }
+                    return Err(e);
+                }
                 // Show the year the expense landed in.
                 self.expense_year = TaxYear::containing(date);
+                let follow_up = if expense.rebill_client_id.is_some() && !expense.is_approved() {
+                    " Add who approved it before invoicing."
+                } else {
+                    ""
+                };
                 self.success(format!(
-                    "Saved {} expense in {}",
+                    "Saved {} expense in {}.{follow_up}",
                     amount,
                     self.expense_year.label()
                 ));
+            }
+            Purpose::Reimbursement => {
+                let options = self.reimbursement_options()?;
+                let Some(e) = options.get(form.selected("expense")) else {
+                    return Ok(true);
+                };
+                if !e.is_approved() {
+                    form.fail(
+                        "expense",
+                        "Not approved yet. Record who approved it and when under Expenses (4)",
+                    );
+                    return Ok(false);
+                }
+                let line = LineItem {
+                    detail: e.invoice_detail(),
+                    expense_id: Some(e.id),
+                    ..LineItem::new(
+                        LineKind::Fixed,
+                        format!("Reimbursement: {}", e.description),
+                        Quantity::ONE,
+                        e.amount,
+                    )
+                };
+                self.add_or_replace_line(None, line);
             }
             Purpose::PriorBill(year) => {
                 let amount = match form.value("amount").as_str() {
@@ -592,16 +768,29 @@ impl App {
                 let Some(unit_price) = money_field(form, "rate", false) else {
                     return Ok(false);
                 };
-                let line = LineItem {
-                    kind: LineKind::ALL[form.selected("kind")],
-                    description: form.value("description"),
+                let line = LineItem::new(
+                    LineKind::ALL[form.selected("kind")],
+                    form.value("description"),
                     quantity,
                     unit_price,
-                };
+                );
                 self.add_or_replace_line(index, line);
             }
         }
         Ok(true)
+    }
+
+    /// "Rebill to" options: nobody, then active clients (plus `current`, even
+    /// if archived). The same list is rebuilt on submit to map the choice back.
+    fn rebill_choices(&self, current: Option<i64>) -> Vec<(Option<i64>, String)> {
+        let mut out = vec![(None, "No one (my own cost)".to_string())];
+        out.extend(
+            self.clients
+                .iter()
+                .filter(|c| !c.archived || Some(c.id) == current)
+                .map(|c| (Some(c.id), c.name.clone())),
+        );
+        out
     }
 
     fn run_action(&mut self, action: Action) -> Result<()> {
@@ -615,8 +804,11 @@ impl App {
                 self.success("Draft deleted");
             }
             Action::Regenerate(id) => {
-                let path = self.regenerate(id)?;
-                self.success(format!("Regenerated {}", crate::paths::display(&path)));
+                let (path, receipts) = self.regenerate(id)?;
+                self.success(format!(
+                    "Regenerated{receipts}: {}",
+                    crate::paths::display(&path)
+                ));
             }
             Action::DeleteExpense(id) => {
                 self.db.delete_expense(id)?;
@@ -659,25 +851,24 @@ impl App {
                     .map(|f| f.label.len())
                     .max()
                     .unwrap_or(10) as u16;
-                // Wide enough for the longest hint or choice, within the screen.
+                // Wide enough for the longest hint or choice, plus any overview
+                // panel, within the screen. Choice hints gain " · ←/→ to change".
                 let content = form
                     .fields
                     .iter()
                     .map(|f| match &f.kind {
-                        super::form::FieldKind::Choice(opts) => {
-                            label_width as usize
-                                + 8
-                                + opts.iter().map(|o| o.chars().count()).max().unwrap_or(0)
-                        }
+                        super::form::FieldKind::Choice(opts) => (label_width as usize
+                            + 8
+                            + opts.iter().map(|o| o.chars().count()).max().unwrap_or(0))
+                        .max(f.hint.chars().count() + 21),
                         _ => f.hint.chars().count() + 4,
                     })
                     .max()
                     .unwrap_or(0) as u16;
-                let width = (label_width + 50)
-                    .max(60)
-                    .max(content)
+                let width = ((label_width + 50).max(60).max(content) + form.side_width())
                     .min(f.area().width.saturating_sub(4));
-                let area = centered(f.area(), width, form.height() + 3);
+                // Borders and padding take 4 columns.
+                let area = centered(f.area(), width, form.height_in(width.saturating_sub(4)) + 3);
                 f.render_widget(Clear, area);
                 let block = popup_block(title).padding(ratatui::widgets::Padding::new(1, 1, 1, 0));
                 let inner = block.inner(area);

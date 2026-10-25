@@ -14,7 +14,7 @@ use super::editor::Editor;
 use super::modals::{Action, Purpose};
 use super::{App, Screen, clamp_selection, list_nav, open_path, theme};
 use crate::db::TxKind;
-use crate::domain::{CreditNote, Status, Transaction, dates};
+use crate::domain::{CreditNote, Invoice, Status, Transaction, dates};
 use crate::paths;
 use crate::reports::InvoiceRow;
 
@@ -285,6 +285,12 @@ impl App {
     // ----- detail ---------------------------------------------------------
 
     fn duplicate(&mut self, id: i64) -> Result<()> {
+        let had_reimbursements = self
+            .db
+            .invoice(id)?
+            .lines
+            .iter()
+            .any(|l| l.is_reimbursement());
         let new_id = self.db.duplicate_invoice(id, dates::today())?;
         self.refresh()?;
         let inv = self.db.invoice(new_id)?;
@@ -294,7 +300,11 @@ impl App {
             &business,
             &self.clients,
         ))));
-        self.success("Duplicated into a new draft. Check the dates and lines, then Ctrl+S.");
+        self.success(if had_reimbursements {
+            "Duplicated into a new draft, without the reimbursements (each is billed once). Check the dates and lines, then Ctrl+S."
+        } else {
+            "Duplicated into a new draft. Check the dates and lines, then Ctrl+S."
+        });
         Ok(())
     }
 
@@ -309,25 +319,62 @@ impl App {
             Ok(())
         })?;
         self.refresh()?;
+        let receipts = self.enclose_receipts(&inv);
         self.success(format!(
-            "Issued {} → {}",
+            "Issued {}{receipts} → {}",
             inv.display_number(),
             paths::display(&written)
         ));
         Ok(())
     }
 
-    pub(super) fn regenerate(&mut self, id: i64) -> Result<PathBuf> {
+    /// Re-renders the PDF and recopies receipts. Returns the PDF path and a
+    /// note about the receipts for the message.
+    pub(super) fn regenerate(&mut self, id: i64) -> Result<(PathBuf, String)> {
         let inv = self.db.invoice(id)?;
         let out = self.output_dir();
         let path = self.renderer()?.write_invoice(&out, &inv)?;
-        Ok(path)
+        Ok((path, self.enclose_receipts(&inv)))
+    }
+
+    /// Copies the receipts for an invoice's reimbursements next to its PDF.
+    /// The invoice is already issued, so problems are reported, not raised.
+    fn enclose_receipts(&self, inv: &Invoice) -> String {
+        match crate::receipts::copy_for_invoice(&self.db, &self.output_dir(), inv) {
+            Ok(r) => {
+                let mut msg = match r.copied.len() {
+                    0 => String::new(),
+                    1 => " with 1 receipt".into(),
+                    n => format!(" with {n} receipts"),
+                };
+                if !r.missing.is_empty() {
+                    msg.push_str(&format!(" (missing receipt: {})", r.missing.join(", ")));
+                }
+                msg
+            }
+            Err(e) => format!(" (receipts not copied: {e:#})"),
+        }
+    }
+
+    /// Renders a draft (saved or not) as it would be issued now and opens
+    /// it. Nothing is saved and no number is used up.
+    pub(super) fn preview_draft(&mut self, inv: &Invoice) -> Result<()> {
+        let preview = self.db.preview_invoice(inv)?;
+        let path = self.renderer()?.write_preview(&preview)?;
+        open_path(&path)?;
+        self.info(match &preview.number {
+            Ok(n) => format!(
+                "Preview opened. Issued now, it would be {n}. Nothing was saved or numbered."
+            ),
+            Err(why) => format!("Preview opened without a number: {why}"),
+        });
+        Ok(())
     }
 
     fn open_invoice_pdf(&mut self, id: i64) -> Result<()> {
         let inv = self.db.invoice(id)?;
         if inv.is_draft() {
-            bail!("Drafts don't have a PDF yet. Issue the invoice first (i).");
+            return self.preview_draft(&inv);
         }
         let path = paths::invoice_pdf(&self.output_dir(), &inv);
         if !path.exists() {
@@ -361,6 +408,7 @@ impl App {
         if d.row.invoice.is_draft() {
             return vec![
                 ("e", "edit"),
+                ("o", "preview"),
                 ("i", "issue"),
                 ("u", "duplicate"),
                 ("x", "delete draft"),
@@ -438,6 +486,10 @@ impl App {
                 bail!(
                     "{number} is issued and locked. To correct it, raise a credit note (c) and issue a new invoice (u duplicates it)."
                 )
+            }
+            KeyCode::Char('o') if is_draft => {
+                let inv = self.db.invoice(id)?;
+                self.preview_draft(&inv)?;
             }
             KeyCode::Char('x') if is_draft => self.confirm(
                 "Delete this draft? This can't be undone.",

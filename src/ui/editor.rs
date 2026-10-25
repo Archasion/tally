@@ -9,8 +9,9 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Paragraph, Row, Table, TableState};
 
 use super::form::{Form, Outcome};
-use super::modals::Action;
+use super::modals::{Action, Purpose};
 use super::{App, Screen, clamp_selection, list_nav, theme};
+use crate::domain::expense::Expense;
 use crate::domain::{Business, Client, Invoice, LineItem, dates};
 
 pub struct Editor {
@@ -127,10 +128,12 @@ impl Editor {
         if self.in_lines {
             vec![
                 ("a", "add line"),
+                ("r", "add reimbursement"),
                 ("Enter/e", "edit"),
                 ("d", "delete"),
                 ("K/J", "move"),
                 ("↑", "to header"),
+                ("Ctrl+P", "preview"),
                 ("Ctrl+S", "save"),
                 ("Esc", "close"),
             ]
@@ -138,6 +141,7 @@ impl Editor {
             vec![
                 ("↑↓/Tab", "move"),
                 ("↓ past notes", "lines"),
+                ("Ctrl+P", "preview"),
                 ("Ctrl+S", "save"),
                 ("Esc", "close"),
             ]
@@ -231,6 +235,20 @@ impl App {
         Ok(())
     }
 
+    /// Previews the draft as currently edited, without saving it.
+    fn preview_editor(&mut self) -> Result<()> {
+        let Screen::Editor(e) = &mut self.screen else {
+            return Ok(());
+        };
+        if let Err((msg, key)) = e.apply_header() {
+            e.in_lines = false;
+            e.header.fail(key, msg);
+            return Ok(());
+        }
+        let inv = e.invoice.clone();
+        self.preview_draft(&inv)
+    }
+
     pub(super) fn close_editor(&mut self) {
         let Some(e) = self.editor() else { return };
         let back_to = if e.is_new() { None } else { Some(e.invoice.id) };
@@ -257,6 +275,9 @@ impl App {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         if ctrl && key.code == KeyCode::Char('s') {
             return self.save_editor();
+        }
+        if ctrl && key.code == KeyCode::Char('p') {
+            return self.preview_editor();
         }
         let Some(e) = self.editor() else {
             return Ok(());
@@ -310,9 +331,12 @@ impl App {
                 let client = e.client_id();
                 self.open_line_form(None, client);
             }
+            KeyCode::Char('r') => self.open_form(Purpose::Reimbursement, None),
             KeyCode::Enter | KeyCode::Char('e') => {
                 let client = e.client_id();
-                if sel.is_some() {
+                if sel.is_some_and(|i| e.invoice.lines[i].is_reimbursement()) {
+                    self.info("Reimbursement lines come from Expenses and can't be edited here. d removes one; r adds one");
+                } else if sel.is_some() {
                     self.open_line_form(sel, client);
                 } else {
                     self.open_line_form(None, client);
@@ -378,7 +402,7 @@ impl App {
         );
         if e.invoice.lines.is_empty() {
             let msg = if e.in_lines {
-                "No lines yet. Press a to add one."
+                "No lines yet. Press a to add one, or r for a reimbursement."
             } else {
                 "No lines yet. Move down here and press a."
             };
@@ -390,7 +414,11 @@ impl App {
             let rows = e.invoice.lines.iter().map(|l| {
                 let unit = l.kind.unit(l.quantity);
                 Row::new(vec![
-                    Line::from(l.kind.label()),
+                    Line::from(if l.is_reimbursement() {
+                        "Reimburse"
+                    } else {
+                        l.kind.label()
+                    }),
                     Line::from(l.description.clone()),
                     Line::from(format!("{} {unit}", l.quantity).trim_end().to_string())
                         .right_aligned(),
@@ -433,6 +461,31 @@ impl App {
             .right_aligned(),
             total_area,
         );
+    }
+
+    /// Expenses that can be added to the draft being edited: rebilled to its
+    /// client, not on any saved invoice, and not already among its lines.
+    pub(super) fn reimbursement_options(&self) -> Result<Vec<Expense>> {
+        let Screen::Editor(e) = &self.screen else {
+            return Ok(Vec::new());
+        };
+        let mut list = self
+            .db
+            .unbilled_reimbursements(e.client_id(), e.invoice.id)?;
+        list.retain(|x| !e.invoice.lines.iter().any(|l| l.expense_id == Some(x.id)));
+        Ok(list)
+    }
+
+    pub(super) fn editor_client_name(&self) -> String {
+        let Screen::Editor(e) = &self.screen else {
+            return String::new();
+        };
+        let id = e.client_id();
+        self.clients
+            .iter()
+            .find(|c| c.id == id)
+            .map(|c| c.name.clone())
+            .unwrap_or_default()
     }
 
     fn open_line_form(&mut self, index: Option<usize>, client_id: i64) {
