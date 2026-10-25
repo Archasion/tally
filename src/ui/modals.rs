@@ -32,6 +32,8 @@ pub enum Purpose {
     Reimbursement,
     /// Regenerate an issued invoice's PDF, keeping or updating its details.
     Regenerate(i64),
+    /// Open or email a credit note: (invoice id, credit note id).
+    CreditNoteActions(i64, i64),
     /// Income tax + Class 4 for a tax year, from an HMRC statement.
     PriorBill(TaxYear),
 }
@@ -43,6 +45,8 @@ pub enum Action {
     DeleteDraft(i64),
     /// Update an issued invoice to the current details, then regenerate it.
     UpdateDetails(i64),
+    /// After opening its email in Mail: record the invoice as sent today.
+    MarkSentToday(i64),
     DeleteTx(TxKind, i64),
     DeleteExpense(i64),
     DiscardEditor,
@@ -66,8 +70,11 @@ pub fn client_form(c: Option<&Client>) -> Form {
         .text("contact", "Contact / FAO", c.contact_name)
         .hint("Optional, e.g. Accounts Payable")
         .text("email", "Email", c.email)
+        .text("email_name", "Name in emails", c.email_name)
+        .hint("Optional, how to greet them: \"Hi Jo,\". Defaults to the contact")
         .text("line1", "Address line 1", c.address.line1)
         .text("line2", "Address line 2", c.address.line2)
+        .text("line3", "Address line 3", c.address.line3)
         .text("town", "Town / city", c.address.town)
         .hint("Include any state, province or region here, e.g. Austin, TX")
         .text("postcode", "Postcode / ZIP", c.address.postcode)
@@ -386,6 +393,23 @@ impl App {
                         )),
                 )
             }
+            Purpose::CreditNoteActions(invoice_id, note_id) => {
+                let title = match self.credit_note(invoice_id, note_id) {
+                    Ok(n) => format!("Credit note {}", n.number),
+                    Err(e) => return self.error(&e),
+                };
+                (
+                    title,
+                    Form::new()
+                        .choice(
+                            "action",
+                            "Do",
+                            vec!["Open the PDF".into(), "Email it to the client".into()],
+                            0,
+                        )
+                        .hint("Emailing opens a new message in Mail; nothing is sent until you press Send"),
+                )
+            }
             Purpose::PriorBill(year) => {
                 let current = self.db.entered_bill(year).ok().flatten().map(|m| m.to_decimal_string()).unwrap_or_default();
                 (
@@ -406,6 +430,25 @@ impl App {
 
     pub(super) fn key_modal(&mut self, key: KeyEvent) -> Result<()> {
         match self.modal.take() {
+            Some(Modal::EmailPreview {
+                invoice_id,
+                title,
+                lines,
+            }) => match key.code {
+                KeyCode::Esc | KeyCode::Enter | KeyCode::Char('q') | KeyCode::Char('m') => Ok(()),
+                KeyCode::Char('o') => {
+                    let inv = self.db.invoice(invoice_id)?;
+                    self.preview_draft(&inv)
+                }
+                _ => {
+                    self.modal = Some(Modal::EmailPreview {
+                        invoice_id,
+                        title,
+                        lines,
+                    });
+                    Ok(())
+                }
+            },
             Some(Modal::Confirm { message, action }) => match key.code {
                 KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => self.run_action(action),
                 KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => Ok(()),
@@ -494,10 +537,12 @@ impl App {
                     id: existing.as_ref().map(|c| c.id).unwrap_or(0),
                     name: form.value("name"),
                     contact_name: form.value("contact"),
+                    email_name: form.value("email_name"),
                     email: form.value("email"),
                     address: Address {
                         line1: form.value("line1"),
                         line2: form.value("line2"),
+                        line3: form.value("line3"),
                         town: form.value("town"),
                         postcode: form.value("postcode"),
                         country: form.value("country"),
@@ -751,6 +796,14 @@ impl App {
                     self.expense_year.label()
                 ));
             }
+            Purpose::CreditNoteActions(invoice_id, note_id) => {
+                if form.selected("action") == 1 {
+                    self.email_credit_note(invoice_id, note_id)?;
+                } else {
+                    let note = self.credit_note(invoice_id, note_id)?;
+                    self.open_credit_note_pdf(&note)?;
+                }
+            }
             Purpose::Regenerate(id) => {
                 let changes = if form.selected("how") == 1 {
                     self.detail_changes(id)?
@@ -866,6 +919,11 @@ impl App {
                 self.go(Screen::Invoices);
                 self.success("Draft deleted");
             }
+            Action::MarkSentToday(id) => {
+                self.db.set_sent(id, Some(dates::today()))?;
+                self.refresh()?;
+                self.success("Marked as sent today");
+            }
             Action::UpdateDetails(id) => {
                 self.db.update_issued_details(id, dates::today())?;
                 self.refresh()?;
@@ -891,6 +949,7 @@ impl App {
     pub(super) fn modal_help(&self) -> Vec<(&'static str, &'static str)> {
         match &self.modal {
             Some(Modal::Confirm { .. }) => vec![("y/Enter", "yes"), ("n/Esc", "no")],
+            Some(Modal::EmailPreview { .. }) => vec![("o", "PDF preview"), ("Esc", "close")],
             _ => vec![
                 ("↑↓/Tab", "move"),
                 ("Enter", "next/save"),
@@ -902,6 +961,10 @@ impl App {
 
     pub(super) fn draw_modal(&self, f: &mut Frame) {
         match &self.modal {
+            Some(Modal::EmailPreview { title, lines, .. }) => {
+                let width = 84.min(f.area().width.saturating_sub(4));
+                render_popup_text(f, title, lines.clone(), width);
+            }
             Some(Modal::Confirm { message, .. }) => {
                 let mut lines: Vec<Line> =
                     message.lines().map(|l| Line::from(l.to_string())).collect();

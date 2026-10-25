@@ -38,6 +38,8 @@
   align: (left + top, right + top),
   [
     #text(17pt, weight: "bold", data.business.name) \
+    // A trading name must be disclosed with your legal name and address.
+    #if data.business.legal_name != "" [#text(fill: muted, [Trading name of #data.business.legal_name]) \ ]
     #for l in data.business.address [#l \ ]
     #if data.business.email != "" [#data.business.email \ ]
     #if data.business.phone != "" [#data.business.phone]

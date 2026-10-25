@@ -20,10 +20,13 @@ pub fn form(b: Option<&Business>, tax: &TaxSettings) -> Form {
     Form::new()
         .text("name", "Your name", get(|b| b.name.clone(), ""))
         .required()
-        .hint("As it should appear on invoices (your own name, as a sole trader)")
+        .hint("As it should appear on invoices: your own name, or a trading name such as Nick Schreiner")
+        .text("legal_name", "Legal name", get(|b| b.legal_name.clone(), ""))
+        .hint("Only if you trade under a different name. Printed as 'Trading name of …', as the law requires")
         .text("line1", "Address line 1", get(|b| b.address.line1.clone(), ""))
         .required()
         .text("line2", "Address line 2", get(|b| b.address.line2.clone(), ""))
+        .text("line3", "Address line 3", get(|b| b.address.line3.clone(), ""))
         .text("town", "Town / city", get(|b| b.address.town.clone(), ""))
         .required()
         .text("postcode", "Postcode", get(|b| b.address.postcode.clone(), ""))
@@ -204,9 +207,11 @@ fn parse(form: &mut Form) -> Option<Business> {
     };
     Some(Business {
         name: form.value("name"),
+        legal_name: form.value("legal_name"),
         address: Address {
             line1: form.value("line1"),
             line2: form.value("line2"),
+            line3: form.value("line3"),
             town: form.value("town"),
             postcode: form.value("postcode").to_uppercase(),
             country: String::new(),
@@ -381,7 +386,7 @@ mod tests {
             ("line1", "1 High St"),
             ("town", "Bristol"),
             ("postcode", "bs1 1aa"),
-            ("account_name", "N Reiners"),
+            ("account_name", "N Schreiner"),
             ("sort_code", "123456"),
             ("account_number", "12345678"),
         ] {
@@ -407,7 +412,10 @@ mod tests {
 
     #[test]
     fn parses_and_normalises() {
-        let b = parse(&mut filled()).unwrap();
+        let mut f = filled();
+        f.set_value("legal_name", "Nikita Šreiners");
+        let b = parse(&mut f).unwrap();
+        assert_eq!(b.legal_name, "Nikita Šreiners");
         assert_eq!(b.bank.sort_code, "12-34-56");
         assert_eq!(b.address.postcode, "BS1 1AA");
         assert_eq!(b.payment_terms_days, 30);

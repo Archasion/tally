@@ -3,6 +3,7 @@
 pub mod backup;
 pub mod db;
 pub mod domain;
+pub mod email;
 pub mod paths;
 pub mod pdf;
 pub mod receipts;

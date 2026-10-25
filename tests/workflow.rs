@@ -20,10 +20,12 @@ fn full_invoice_lifecycle() {
     let db = Db::open(&out.join("tally.db")).unwrap();
 
     db.save_business(&Business {
-        name: "Nick Reiners".into(),
+        name: "Nick Schreiner".into(),
+        legal_name: String::new(),
         address: Address {
             line1: "1 High St".into(),
             line2: String::new(),
+            line3: String::new(),
             town: "Bristol".into(),
             postcode: "BS1 1AA".into(),
             country: String::new(),
@@ -31,7 +33,7 @@ fn full_invoice_lifecycle() {
         email: String::new(),
         phone: String::new(),
         bank: BankDetails {
-            account_name: "N Reiners".into(),
+            account_name: "N Schreiner".into(),
             sort_code: "12-34-56".into(),
             account_number: "12345678".into(),
             ..BankDetails::default()
@@ -210,7 +212,8 @@ fn reimbursed_purchase_with_receipt() {
     std::fs::create_dir_all(&out).unwrap();
     let db = Db::open(&out.join("tally.db")).unwrap();
     db.save_business(&Business {
-        name: "Nick Reiners".into(),
+        name: "Nick Schreiner".into(),
+        legal_name: String::new(),
         address: Address {
             line1: "1 High St".into(),
             town: "Bristol".into(),

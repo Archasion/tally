@@ -27,6 +27,9 @@ const MIGRATIONS: &[&str] = &[
     include_str!("004_reimbursements.sql"),
     include_str!("005_international_payments.sql"),
     include_str!("006_update_issued_details.sql"),
+    include_str!("007_legal_name.sql"),
+    include_str!("008_client_email_name.sql"),
+    include_str!("009_address_line3.sql"),
 ];
 
 pub struct Db {
@@ -101,9 +104,9 @@ impl Db {
             "INSERT INTO business (id, name, address_line1, address_line2, town, postcode, email, phone,
                 bank_account_name, bank_sort_code, bank_account_number, payment_terms_days,
                 default_notes, invoice_pattern, credit_note_pattern, output_dir, backups_to_keep,
-                bank_iban, bank_bic, bank_name, bank_address)
+                bank_iban, bank_bic, bank_name, bank_address, legal_name, address_line3)
              VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16,
-                ?17, ?18, ?19, ?20)
+                ?17, ?18, ?19, ?20, ?21, ?22)
              ON CONFLICT (id) DO UPDATE SET
                 name = excluded.name, address_line1 = excluded.address_line1,
                 address_line2 = excluded.address_line2, town = excluded.town,
@@ -117,7 +120,8 @@ impl Db {
                 credit_note_pattern = excluded.credit_note_pattern,
                 output_dir = excluded.output_dir, backups_to_keep = excluded.backups_to_keep,
                 bank_iban = excluded.bank_iban, bank_bic = excluded.bank_bic,
-                bank_name = excluded.bank_name, bank_address = excluded.bank_address",
+                bank_name = excluded.bank_name, bank_address = excluded.bank_address,
+                legal_name = excluded.legal_name, address_line3 = excluded.address_line3",
             params![
                 b.name,
                 b.address.line1,
@@ -139,6 +143,8 @@ impl Db {
                 b.bank.bic,
                 b.bank.bank_name,
                 b.bank.bank_address,
+                b.legal_name,
+                b.address.line3,
             ],
         )?;
         Ok(())
@@ -206,9 +212,11 @@ impl Db {
 fn business_from_row(r: &Row) -> rusqlite::Result<Business> {
     Ok(Business {
         name: r.get("name")?,
+        legal_name: r.get("legal_name")?,
         address: Address {
             line1: r.get("address_line1")?,
             line2: r.get("address_line2")?,
+            line3: r.get("address_line3")?,
             town: r.get("town")?,
             postcode: r.get("postcode")?,
             country: String::new(),
@@ -261,10 +269,12 @@ pub(crate) mod test_support {
 
     pub fn business() -> Business {
         Business {
-            name: "Nick Reiners".into(),
+            name: "Nick Schreiner".into(),
+            legal_name: String::new(),
             address: Address {
                 line1: "1 High Street".into(),
                 line2: String::new(),
+                line3: String::new(),
                 town: "Bristol".into(),
                 postcode: "BS1 1AA".into(),
                 country: String::new(),
@@ -272,7 +282,7 @@ pub(crate) mod test_support {
             email: "nick@example.com".into(),
             phone: String::new(),
             bank: BankDetails {
-                account_name: "N Reiners".into(),
+                account_name: "N Schreiner".into(),
                 sort_code: "12-34-56".into(),
                 account_number: "12345678".into(),
                 ..BankDetails::default()
@@ -335,6 +345,7 @@ mod tests {
         let db = Db::open_in_memory().unwrap();
         assert!(db.business().unwrap().is_none());
         let mut b = business();
+        b.address.line3 = "Unit 4".into();
         db.save_business(&b).unwrap();
         assert_eq!(db.business().unwrap().unwrap(), b);
         b.address.town = "Leeds".into();

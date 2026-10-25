@@ -46,6 +46,9 @@ pub struct DocumentData {
 #[derive(Debug, Clone, Serialize)]
 pub struct Party {
     pub name: String,
+    /// Your legal name when you trade under a different one, printed as
+    /// "Trading name of …"; `""` otherwise, and always for clients.
+    pub legal_name: String,
     pub contact: String,
     /// Address lines, ending with the country for clients.
     pub address: Vec<String>,
@@ -230,6 +233,7 @@ fn business_party(snap: &Snapshot) -> Party {
     let b = &snap.business;
     Party {
         name: b.name.clone(),
+        legal_name: b.disclosed_legal_name().to_string(),
         contact: String::new(),
         address: b.address.lines(),
         tax_id: String::new(),
@@ -242,6 +246,7 @@ fn client_party(snap: &Snapshot) -> Party {
     let c = &snap.client;
     Party {
         name: c.name.clone(),
+        legal_name: String::new(),
         contact: c.contact_name.clone(),
         address: c.address.lines(),
         tax_id: match (c.tax_id_label.trim(), c.tax_id.trim()) {
@@ -405,9 +410,11 @@ pub fn sample_invoice() -> Invoice {
     let start = issue.with_day(1).unwrap_or(issue);
     let business = Business {
         name: "Your Name".into(),
+        legal_name: String::new(),
         address: Address {
             line1: "1 Example Street".into(),
             line2: String::new(),
+            line3: String::new(),
             town: "Bristol".into(),
             postcode: "BS1 1AA".into(),
             country: String::new(),
@@ -434,6 +441,7 @@ pub fn sample_invoice() -> Invoice {
     client.address = Address {
         line1: "2 Market Square".into(),
         line2: "Suite 4".into(),
+        line3: String::new(),
         town: "Bath".into(),
         postcode: "BA1 1AA".into(),
         country: DEFAULT_COUNTRY.into(),
@@ -569,6 +577,33 @@ mod tests {
         let old = r#"{"account_name":"N","sort_code":"12-34-56","account_number":"12345678"}"#;
         let b: crate::domain::BankDetails = serde_json::from_str(old).unwrap();
         assert_eq!(b.iban, "");
+    }
+
+    #[test]
+    fn trading_name_discloses_the_legal_name() {
+        let mut inv = sample_invoice();
+        let b = &mut inv.snapshot.as_mut().unwrap().business;
+        b.name = "Nick Schreiner".into();
+        let party = |inv: &Invoice| DocumentData::for_invoice(inv).unwrap().business;
+        assert_eq!(party(&inv).legal_name, "");
+        inv.snapshot.as_mut().unwrap().business.legal_name = " nick schreiner ".into();
+        assert_eq!(party(&inv).legal_name, "", "same as the trading name");
+        inv.snapshot.as_mut().unwrap().business.legal_name = "Nikita Šreiners".into();
+        let data = DocumentData::for_invoice(&inv).unwrap();
+        assert_eq!(data.business.legal_name, "Nikita Šreiners");
+        assert_eq!(data.client.legal_name, "");
+        assert!(
+            Renderer::builtin()
+                .render(&data)
+                .unwrap()
+                .starts_with(b"%PDF-")
+        );
+
+        // Invoices saved before the field existed still load.
+        let mut json = serde_json::to_value(&inv.snapshot.as_ref().unwrap().business).unwrap();
+        json.as_object_mut().unwrap().remove("legal_name");
+        let old: crate::domain::Business = serde_json::from_value(json).unwrap();
+        assert_eq!(old.legal_name, "");
     }
 
     #[test]

@@ -54,6 +54,10 @@ embedded [Typst](https://typst.app) compiler. No external tools are needed.
     approval and supplier invoice number, and issuing places the receipts
     next to the invoice PDF, ready to attach to the same email. Each
     purchase can be billed only once.
+- **Trading names:** invoice under a name such as *Nick Schreiner* and set
+  your legal name in Settings. tally prints "Trading name of Nikita
+  Šreiners" under it, as UK law requires. Keep the bank account name exactly
+  as your bank has it, so payers' name checks match.
 - **Invoice notes**, printed under the payment details. New invoices start
   with the default notes from Settings.
 - **Tax estimate:**
@@ -117,9 +121,11 @@ were issued with.
 | Save a draft | `Ctrl+S` |
 | Preview a draft as a PDF | `Ctrl+P` in the editor (includes unsaved edits), or `o` on a draft. Nothing is saved or numbered |
 | Issue (number + PDF + lock) | `i` on the draft |
+| Preview a draft's email | `m` on a draft shows the email it would get once issued, inside tally (`o` there opens the PDF preview) |
+| Email it to the client | `m` opens a new message in Apple Mail with the PDF and any receipts attached; you check it and press Send. tally then asks whether to mark it sent today |
 | Mark as sent | `s` |
 | Record a payment | `p` (pre-filled with the balance) |
-| Credit note | `c` |
+| Credit note | `c` (`Enter` on one in the invoice's history opens or emails it) |
 | Refund an overpayment or credit | `r` (only offered when money is owed back) |
 | Open or regenerate the PDF | `o` / `R` (`R` asks whether to keep the details as issued or update them to your current ones, e.g. to add an IBAN) |
 | Duplicate an invoice as a new draft | `u` |

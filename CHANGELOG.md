@@ -37,7 +37,24 @@
   business and client details. Updating lists what changes, asks again, and
   is recorded on the invoice ("Details updated to current details on …").
   The number, dates, lines and amounts never change.
-- Database migrations 5 and 6.
+- **Email invoices:** `m` on an issued invoice opens a new message in Apple
+  Mail to the client's email, from your email in Settings, with a subject,
+  short text, the PDF and any receipts attached. Nothing is sent: you check
+  it and press Send, then tally asks whether to mark the invoice sent today.
+  Credit notes can be emailed the same way (`Enter` on one). macOS asks once
+  to let your terminal control Mail. `m` on a draft previews the email inside
+  tally instead (recipient, subject, text and attachments, with the
+  provisional number); nothing opens in Mail.
+- Clients have a *Name in emails* (e.g. "Jo") for the greeting, "Hi Jo,".
+  It falls back to the contact, then to "Hello,". It's never printed on
+  invoices.
+- **Trading name:** a *Legal name* field in Settings. If you trade under a
+  different name, invoices and credit notes print "Trading name of <legal
+  name>" under it, beside your address, as the Companies Act 2006 business
+  names rules require of sole traders.
+- An optional *Address line 3* for you (Settings) and for clients, printed
+  after line 2.
+- Database migrations 5 to 9.
 - Template data: `lines[].detail`, and `draft` (true on previews).
 - CSV export: `expenses.csv` adds billing, rebill client, approval, invoice,
   supplier invoice and receipt file columns.

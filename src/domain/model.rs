@@ -9,6 +9,9 @@ use super::money::{Money, Quantity};
 pub struct Address {
     pub line1: String,
     pub line2: String,
+    /// Optional third line. (`default` keeps older snapshots readable.)
+    #[serde(default)]
+    pub line3: String,
     pub town: String,
     /// Postcode or ZIP; formats vary by country.
     pub postcode: String,
@@ -24,6 +27,7 @@ impl Address {
         [
             &self.line1,
             &self.line2,
+            &self.line3,
             &self.town,
             &self.postcode,
             &self.country,
@@ -57,7 +61,12 @@ pub struct BankDetails {
 /// Your own details and app settings. There is exactly one.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Business {
+    /// The name you trade under, printed at the top of invoices.
     pub name: String,
+    /// Your legal name, if you trade under a different one. A sole trader's
+    /// business name must be disclosed with their legal name and address.
+    #[serde(default)]
+    pub legal_name: String,
     pub address: Address,
     pub email: String,
     pub phone: String,
@@ -124,6 +133,10 @@ pub struct Client {
     pub name: String,
     pub contact_name: String,
     pub email: String,
+    /// How to greet them in emails, e.g. `Jo`. Empty means the contact name.
+    /// Never printed on invoices.
+    #[serde(default)]
+    pub email_name: String,
     pub address: Address,
     /// Short code used by the `{LABEL}` number token, e.g. `LGT`. Empty = none.
     /// Uppercase A–Z/0–9, unique across clients, locked once used on an issued invoice.
@@ -144,6 +157,15 @@ pub struct Client {
 }
 
 impl Client {
+    /// The name to greet them by in emails: the email name, else the
+    /// contact, else empty.
+    pub fn greeting_name(&self) -> &str {
+        match self.email_name.trim() {
+            "" => self.contact_name.trim(),
+            name => name,
+        }
+    }
+
     /// Outside the UK, so paying from abroad.
     pub fn is_abroad(&self) -> bool {
         !super::bank::is_uk(&self.address.country)
@@ -155,6 +177,7 @@ impl Client {
             name: String::new(),
             contact_name: String::new(),
             email: String::new(),
+            email_name: String::new(),
             address: Address {
                 country: DEFAULT_COUNTRY.into(),
                 ..Address::default()
@@ -222,6 +245,19 @@ pub struct Snapshot {
     pub client: Client,
 }
 
+impl Business {
+    /// The legal name to disclose on documents: empty unless it differs from
+    /// the trading name (ignoring case and surrounding spaces).
+    pub fn disclosed_legal_name(&self) -> &str {
+        let legal = self.legal_name.trim();
+        if legal.is_empty() || legal.to_lowercase() == self.name.trim().to_lowercase() {
+            ""
+        } else {
+            legal
+        }
+    }
+}
+
 impl Snapshot {
     /// What differs on the invoice between these details and `newer`, as
     /// short phrases for a confirmation, e.g. `["your bank details", "the client's email"]`.
@@ -230,7 +266,10 @@ impl Snapshot {
         let (b, nb) = (&self.business, &newer.business);
         let (c, nc) = (&self.client, &newer.client);
         [
-            (b.name != nb.name, "your name"),
+            (
+                b.name != nb.name || b.disclosed_legal_name() != nb.disclosed_legal_name(),
+                "your name",
+            ),
             (b.address != nb.address, "your address"),
             (
                 b.email != nb.email || b.phone != nb.phone,
@@ -516,11 +555,21 @@ mod tests {
         let a = Address {
             line1: "1 High St".into(),
             line2: " ".into(),
+            line3: String::new(),
             town: "Bristol".into(),
             postcode: "BS1 1AA".into(),
             country: String::new(),
         };
         assert_eq!(a.lines(), vec!["1 High St", "Bristol", "BS1 1AA"]);
+        let three = Address {
+            line2: "Clifton".into(),
+            line3: "Unit 4".into(),
+            ..a.clone()
+        };
+        assert_eq!(
+            three.lines(),
+            vec!["1 High St", "Clifton", "Unit 4", "Bristol", "BS1 1AA"]
+        );
         let abroad = Address {
             line1: "Hauptstraße 1".into(),
             postcode: "10115".into(),

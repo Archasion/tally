@@ -408,7 +408,187 @@ impl App {
         open_path(&path)
     }
 
-    fn open_credit_note_pdf(&mut self, note: &CreditNote) -> Result<()> {
+    /// Opens a new message to the client in Mail with the invoice PDF and its
+    /// receipts attached, then asks whether to mark it as sent. Never sends.
+    fn email_invoice(&mut self, id: i64) -> Result<()> {
+        let inv = self.db.invoice(id)?;
+        let out = self.output_dir();
+        // Write the PDF and receipts if they're missing; otherwise use them as they are.
+        let pdf = paths::invoice_pdf(&out, &inv);
+        if !pdf.exists() {
+            self.renderer()?.write_invoice(&out, &inv)?;
+        }
+        let enclosed = crate::receipts::copy_for_invoice(&self.db, &out, &inv)?;
+        let mut attachments = vec![pdf];
+        attachments.extend(enclosed.copied.iter().cloned());
+        let business = self.db.require_business()?;
+        let client = self.db.client(inv.client_id)?;
+        let message = crate::email::invoice_message(
+            &inv,
+            &self.db.totals(id)?,
+            &client,
+            &business.email,
+            attachments,
+            enclosed.copied.len(),
+        )?;
+        crate::email::open_in_mail(&message)?;
+
+        let mut notes = Vec::new();
+        if client.email.trim().is_empty() {
+            notes.push(format!(
+                "{} has no email in tally, so add the recipient in Mail.",
+                client.name
+            ));
+        }
+        if !enclosed.missing.is_empty() {
+            notes.push(format!(
+                "Missing receipt files weren't attached: {}.",
+                enclosed.missing.join(", ")
+            ));
+        }
+        if let Some(on) = inv.sent_on {
+            notes.push(format!("It's already marked sent on {}.", dates::long(on)));
+        }
+        let notes = if notes.is_empty() {
+            String::new()
+        } else {
+            format!("\n\n{}", notes.join("\n"))
+        };
+        self.confirm(
+            format!(
+                "The email for {} is open in Mail, ready for you to check and send.{notes}\n\nMark it as sent today? Say no if you don't send it.",
+                inv.display_number()
+            ),
+            Action::MarkSentToday(id),
+        );
+        Ok(())
+    }
+
+    /// Shows, inside tally, the email a draft would get once issued: the
+    /// same wording, current details and provisional number. Nothing opens
+    /// in Mail, so a draft can't be sent by mistake.
+    fn email_preview(&mut self, id: i64) -> Result<()> {
+        let inv = self.db.invoice(id)?;
+        let preview = self.db.preview_invoice(&inv)?;
+        let mut numbered = preview.invoice.clone();
+        if let Ok(n) = &preview.number {
+            numbered.number = Some(n.clone());
+        }
+        // Receipts that would be attached: reimbursements with a stored file.
+        let mut receipts = 0;
+        for expense_id in inv.lines.iter().filter_map(|l| l.expense_id) {
+            if !self.db.expense(expense_id)?.receipt_file.is_empty() {
+                receipts += 1;
+            }
+        }
+        let totals = crate::domain::Totals {
+            total: inv.total(),
+            ..Default::default()
+        };
+        let client = self.db.client(inv.client_id)?;
+        let business = self.db.require_business()?;
+        let message = crate::email::invoice_message(
+            &numbered,
+            &totals,
+            &client,
+            &business.email,
+            Vec::new(),
+            receipts,
+        )?;
+
+        let field = |k: &str, v: String| {
+            Line::from(vec![
+                Span::styled(format!("{k:<9}"), theme::muted()),
+                Span::raw(v),
+            ])
+        };
+        let or_none = |s: &str, none: &str| {
+            if s.is_empty() {
+                none.to_string()
+            } else {
+                s.to_string()
+            }
+        };
+        let mut lines = vec![
+            field(
+                "To",
+                or_none(
+                    &message.to,
+                    "(no email for this client; you'd add it in Mail)",
+                ),
+            ),
+            field("From", or_none(&message.from, "(Mail's default account)")),
+            field("Subject", message.subject.clone()),
+            Line::default(),
+        ];
+        lines.extend(message.body.lines().map(|l| Line::from(l.to_string())));
+        lines.push(Line::default());
+        lines.push(field(
+            "Attached",
+            match receipts {
+                0 => "invoice PDF".into(),
+                1 => "invoice PDF and 1 receipt".into(),
+                n => format!("invoice PDF and {n} receipts"),
+            },
+        ));
+        lines.push(Line::styled(
+            match &preview.number {
+                Ok(n) => format!("{n} is provisional until you issue the invoice."),
+                Err(why) => format!("No number yet: {why}"),
+            },
+            theme::muted(),
+        ));
+        self.modal = Some(super::Modal::EmailPreview {
+            invoice_id: id,
+            title: format!("Email preview: draft #{id}"),
+            lines,
+        });
+        Ok(())
+    }
+
+    /// Opens a new message to the client in Mail with the credit note attached.
+    pub(super) fn email_credit_note(&mut self, invoice_id: i64, note_id: i64) -> Result<()> {
+        let note = self.credit_note(invoice_id, note_id)?;
+        let inv = self.db.invoice(invoice_id)?;
+        let path = self.credit_note_pdf(&note)?;
+        let client = self.db.client(inv.client_id)?;
+        let owed_back = (-self.db.totals(invoice_id)?.balance()).max(crate::domain::Money::ZERO);
+        let message = crate::email::credit_note_message(
+            &note,
+            &inv,
+            owed_back,
+            &client,
+            &self.db.require_business()?.email,
+            path,
+        );
+        crate::email::open_in_mail(&message)?;
+        self.success(format!(
+            "The email for credit note {} is open in Mail, ready for you to check and send.",
+            note.number
+        ));
+        Ok(())
+    }
+
+    pub(super) fn credit_note(&self, invoice_id: i64, note_id: i64) -> Result<CreditNote> {
+        self.db
+            .credit_notes(Some(invoice_id))?
+            .into_iter()
+            .find(|n| n.id == note_id)
+            .ok_or_else(|| anyhow::anyhow!("credit note {note_id} not found"))
+    }
+
+    /// The credit note's PDF, written first if it's missing.
+    fn credit_note_pdf(&mut self, note: &CreditNote) -> Result<PathBuf> {
+        let path = paths::credit_note_pdf(&self.output_dir(), note);
+        if !path.exists() {
+            let inv = self.db.invoice(note.invoice_id)?;
+            let out = self.output_dir();
+            self.renderer()?.write_credit_note(&out, note, &inv)?;
+        }
+        Ok(path)
+    }
+
+    pub(super) fn open_credit_note_pdf(&mut self, note: &CreditNote) -> Result<()> {
         let path = paths::credit_note_pdf(&self.output_dir(), note);
         if !path.exists() {
             let inv = self.db.invoice(note.invoice_id)?;
@@ -430,6 +610,7 @@ impl App {
             return vec![
                 ("e", "edit"),
                 ("o", "preview"),
+                ("m", "email preview"),
                 ("i", "issue"),
                 ("u", "duplicate"),
                 ("x", "delete draft"),
@@ -443,9 +624,14 @@ impl App {
         if d.row.totals.creditable().is_positive() {
             keys.push(("c", "credit note"));
         }
-        keys.extend([("o", "PDF"), ("R", "regenerate"), ("u", "duplicate")]);
+        keys.extend([
+            ("m", "email"),
+            ("o", "PDF"),
+            ("R", "regenerate"),
+            ("u", "duplicate"),
+        ]);
         match d.sel.selected().and_then(|i| d.entries.get(i)) {
-            Some(Entry::Credit(_)) => keys.push(("Enter", "open credit note")),
+            Some(Entry::Credit(_)) => keys.push(("Enter", "open/email credit note")),
             Some(_) => keys.push(("X", "delete entry")),
             None => {}
         }
@@ -536,11 +722,13 @@ impl App {
                 self.open_form(Purpose::CreditNote(id), Some(creditable));
             }
             KeyCode::Char('s') if !is_draft => self.open_form(Purpose::MarkSent(id), None),
+            KeyCode::Char('m') if !is_draft => self.email_invoice(id)?,
+            KeyCode::Char('m') => self.email_preview(id)?,
             KeyCode::Char('o') if !is_draft => self.open_invoice_pdf(id)?,
             KeyCode::Char('R') if !is_draft => self.open_form(Purpose::Regenerate(id), None),
             KeyCode::Enter => {
                 if let Some(cn) = selected_cn {
-                    self.open_credit_note_pdf(&cn)?;
+                    self.open_form(Purpose::CreditNoteActions(id, cn.id), None);
                 }
             }
             KeyCode::Char('X') => {

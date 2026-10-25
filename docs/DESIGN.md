@@ -34,6 +34,7 @@ src/
 rates/uk.toml        Built-in rates with GOV.UK sources and verified dates
   backup.rs          Online backup + pruning
   receipts.rs        Copying receipt files in, and next to invoice PDFs
+  email.rs           Invoice and credit-note emails, opened in Apple Mail
   paths.rs           Database location, output folder layout, safe filenames
   ui/                ratatui + crossterm full-screen app
     mod.rs           App state, event loop, navigation, chrome
@@ -164,6 +165,12 @@ Draft ──issue──▶ Issued ──mark sent──▶ Sent
   *DE123456789*), printed under the client's address. You must fill in both
   or neither.
 - All amounts are in **GBP**; there's no currency conversion.
+- **Trading name:** `Business::legal_name` (migration 7). When it's set and
+  differs from `name` (ignoring case and spaces), documents print "Trading
+  name of <legal name>" under the business name, next to the address. That
+  meets the Companies Act 2006 Part 41 disclosure for a sole trader's
+  business name. It's part of the snapshot, so issued invoices keep what
+  they were issued with.
 - **IBAN, BIC, bank name and address** (Settings, migration 5) are printed
   only when the client's country isn't the UK (`bank::is_uk`, which accepts
   common spellings and treats an empty country as the UK) and an IBAN is set.
@@ -281,6 +288,7 @@ Outstanding invoices are grouped by days past the due date: not yet due,
 | **Reimbursements are recharges, linked to expenses** | One record of each purchase feeds both the tax estimate and the invoice, and a purchase can't be billed twice or silently changed after billing. |
 | **Receipts are copied, not merged into the PDF** | The Typst sandbox only reads `/data.json`, which keeps templates repeatable. A separate file next to the invoice is just as easy to attach and stays exactly as the supplier issued it. |
 | **Reimbursement approval is required before billing** | The client agreed to pay for it; recording who and when settles a dispute before it starts. |
+| **Email opens a message in Mail, never sends** | `mailto:` links can't carry attachments, so tally scripts Apple Mail (`osascript`; text is passed as arguments, never spliced into the script). Sending stays a deliberate step in Mail, and the sent date is only recorded if you say so. |
 | **Backups on quit** | Automatic, with no background process. `tally backup` is there for scripts. |
 
 ## Testing

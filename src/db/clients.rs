@@ -25,8 +25,10 @@ impl Db {
         self.write_client(
             "INSERT INTO clients (id, name, contact_name, email, address_line1, address_line2,
                 town, postcode, country, label, tax_id_label, tax_id, is_business,
-                late_payment_notice, default_rate_pence, default_rate_kind, archived)
-             VALUES (NULL, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
+                late_payment_notice, default_rate_pence, default_rate_kind, archived, email_name,
+                address_line3)
+             VALUES (NULL, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18,
+                ?19)",
             &c,
         )?;
         Ok(self.conn.last_insert_rowid())
@@ -38,7 +40,8 @@ impl Db {
             "UPDATE clients SET name = ?2, contact_name = ?3, email = ?4, address_line1 = ?5,
                 address_line2 = ?6, town = ?7, postcode = ?8, country = ?9, label = ?10,
                 tax_id_label = ?11, tax_id = ?12, is_business = ?13, late_payment_notice = ?14,
-                default_rate_pence = ?15, default_rate_kind = ?16, archived = ?17
+                default_rate_pence = ?15, default_rate_kind = ?16, archived = ?17, email_name = ?18,
+                address_line3 = ?19
              WHERE id = ?1",
             &c,
         )?;
@@ -48,7 +51,7 @@ impl Db {
         Ok(())
     }
 
-    /// Runs an insert/update with the client's fields bound as ?1..?17,
+    /// Runs an insert/update with the client's fields bound as ?1..?19,
     /// turning constraint failures into readable messages.
     fn write_client(&self, sql: &str, c: &Client) -> Result<usize> {
         let result = self.conn.execute(
@@ -71,6 +74,8 @@ impl Db {
                 c.default_rate.map(Money::pence),
                 c.default_rate_kind.as_str(),
                 c.archived,
+                c.email_name.trim(),
+                c.address.line3.trim(),
             ],
         );
         match result {
@@ -126,10 +131,12 @@ fn client_from_row(r: &Row) -> rusqlite::Result<Client> {
         id: r.get("id")?,
         name: r.get("name")?,
         contact_name: r.get("contact_name")?,
+        email_name: r.get("email_name")?,
         email: r.get("email")?,
         address: Address {
             line1: r.get("address_line1")?,
             line2: r.get("address_line2")?,
+            line3: r.get("address_line3")?,
             town: r.get("town")?,
             postcode: r.get("postcode")?,
             country: r.get("country")?,

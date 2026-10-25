@@ -101,6 +101,12 @@ pub(crate) enum Modal {
         message: String,
         action: Action,
     },
+    /// Read-only: the email a draft would get once issued.
+    EmailPreview {
+        invoice_id: i64,
+        title: String,
+        lines: Vec<Line<'static>>,
+    },
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -513,7 +519,10 @@ pub(crate) fn popup_block(title: &str) -> Block<'static> {
 }
 
 pub(crate) fn render_popup_text(f: &mut Frame, title: &str, text: Vec<Line<'static>>, width: u16) {
-    let height = text.len() as u16 + 4;
+    // Rows after wrapping, inside the borders and side padding.
+    let inner = width.saturating_sub(4).max(1) as usize;
+    let rows: usize = text.iter().map(|l| l.width().div_ceil(inner).max(1)).sum();
+    let height = rows as u16 + 4;
     let area = centered(f.area(), width, height);
     f.render_widget(Clear, area);
     f.render_widget(
