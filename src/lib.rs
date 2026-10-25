@@ -6,4 +6,5 @@ pub mod domain;
 pub mod paths;
 pub mod pdf;
 pub mod reports;
+pub mod tax;
 pub mod ui;

@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.3.0 — 2026-10-03
+
+- **Expenses** tab: cash-basis expenses in Self Assessment (SA103F)
+  categories, with per-category totals for each tax year.
+- **Tax estimate** (Reports → Tax estimate, and `tally tax [YEAR]`):
+  - income tax (England, Wales & NI), Class 4, and Class 2 (not payable or
+    voluntary), plus optional student loan Plans 1/2/4/5 and Postgraduate
+  - each part marked required, optional or not payable, showing every rate
+    and threshold used
+  - year to date and full-year projection
+  - payments on account schedule, with an optional entered prior-year bill
+  - Making Tax Digital threshold warnings
+- Rates for 2024-25, 2025-26 and 2026-27 built in (`rates/uk.toml`, checked
+  against GOV.UK on 2026-10-03). Add or correct years in
+  `<output folder>/rates.toml`; `tally rates` prints the format.
+- Settings: student loan on/off, plan, Postgraduate Loan, pay voluntary
+  Class 2.
+- CSV export adds `expenses.csv`.
+- Tabs are now 1 Dashboard, 2 Invoices, 3 Clients, 4 Expenses, 5 Reports,
+  6 Settings.
+- Database migration 3.
+
 ## 0.2.0 — 2026-10-03
 
 - `{LABEL}` number token for per-client numbering, e.g. `LGT-2026-0001`.

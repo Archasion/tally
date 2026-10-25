@@ -11,9 +11,10 @@ use super::form::{Form, Outcome};
 use super::{App, Screen, theme};
 use crate::domain::numbering::NumberPattern;
 use crate::domain::{Address, BankDetails, Business};
+use crate::tax::{LoanPlan, TaxSettings};
 use crate::{backup, paths};
 
-pub fn form(b: Option<&Business>) -> Form {
+pub fn form(b: Option<&Business>, tax: &TaxSettings) -> Form {
     let get =
         |f: fn(&Business) -> String, default: &str| b.map(f).unwrap_or_else(|| default.to_string());
     Form::new()
@@ -57,6 +58,33 @@ pub fn form(b: Option<&Business>) -> Form {
         .text("backups", "Backups to keep", get(|b| b.backups_to_keep.to_string(), "10"))
         .required()
         .hint("A backup is written to <output folder>/backups each time you quit")
+        .toggle("student_loan", "Student loan repayments", tax.student_loan)
+        .hint("Include student loan repayments in the tax estimate")
+        .choice(
+            "loan_plan",
+            "Student loan plan",
+            std::iter::once("None (postgraduate only)".to_string())
+                .chain(LoanPlan::ALL.iter().map(|p| p.label().to_string()))
+                .collect(),
+            tax.plan.map(|p| LoanPlan::ALL.iter().position(|x| *x == p).unwrap_or(0) + 1).unwrap_or(0),
+        )
+        .hint("Your undergraduate plan (check your Student Loans Company account)")
+        .toggle("postgraduate", "Postgraduate Loan", tax.postgraduate)
+        .hint("Repaid at 6% on top of any undergraduate plan")
+        .toggle("voluntary_class2", "Pay voluntary Class 2", tax.voluntary_class2)
+        .hint("If profits are under the Small Profits Threshold, add voluntary Class 2 NIC to the estimate")
+}
+
+fn parse_tax(form: &Form) -> TaxSettings {
+    TaxSettings {
+        student_loan: form.is_on("student_loan"),
+        plan: form
+            .selected("loan_plan")
+            .checked_sub(1)
+            .and_then(|i| LoanPlan::ALL.get(i).copied()),
+        postgraduate: form.is_on("postgraduate"),
+        voluntary_class2: form.is_on("voluntary_class2"),
+    }
 }
 
 /// Validates the form into a `Business`, reporting the first bad field.
@@ -166,9 +194,9 @@ impl App {
             self.reset_renderer();
             let uses_override = self.renderer()?.uses_template_override();
             self.success(if uses_override {
-                "Reloaded fonts and your template.typ override"
+                "Reloaded tax rates, fonts and your template.typ override"
             } else {
-                "Reloaded fonts (using the built-in template)"
+                "Reloaded tax rates and fonts (using the built-in template)"
             });
             return Ok(());
         }
@@ -195,7 +223,16 @@ impl App {
                     );
                     return Ok(());
                 }
-                if let Err(e) = self.db.save_business(&business) {
+                let tax = parse_tax(form);
+                if tax.student_loan && tax.plan.is_none() && !tax.postgraduate {
+                    form.fail("loan_plan", "Choose a plan, or switch on Postgraduate Loan, or turn student loan repayments off");
+                    return Ok(());
+                }
+                if let Err(e) = self
+                    .db
+                    .save_business(&business)
+                    .and_then(|_| self.db.save_tax_settings(&tax))
+                {
                     form.error = Some(format!("{e:#}"));
                     return Ok(());
                 }
@@ -278,7 +315,7 @@ mod tests {
     use super::*;
 
     fn filled() -> Form {
-        let mut f = form(None);
+        let mut f = form(None, &TaxSettings::default());
         for (k, v) in [
             ("name", "Nick"),
             ("line1", "1 High St"),
@@ -291,6 +328,21 @@ mod tests {
             f.set_value(k, v);
         }
         f
+    }
+
+    #[test]
+    fn tax_settings_round_trip_through_the_form() {
+        let t = TaxSettings {
+            student_loan: true,
+            plan: Some(LoanPlan::Plan4),
+            postgraduate: true,
+            voluntary_class2: false,
+        };
+        assert_eq!(parse_tax(&form(None, &t)), t);
+        assert_eq!(
+            parse_tax(&form(None, &TaxSettings::default())),
+            TaxSettings::default()
+        );
     }
 
     #[test]

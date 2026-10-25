@@ -1,0 +1,165 @@
+# UK tax rates used by tally's tax estimate for a self-employed sole trader.
+#
+# Income tax figures are for England, Wales and Northern Ireland (Scotland
+# has different bands). Amounts are in pounds, rates in percent.
+#
+# To add a new tax year or correct a figure without updating tally, run
+#     tally rates > "<output folder>/rates.toml"
+# then edit that file. A [years.N] block in rates.toml replaces the built-in
+# block for that year completely. Year N is the tax year starting 6 April N.
+#
+# Every figure below was checked against the listed GOV.UK pages on the
+# `verified` date.
+
+[years.2026]
+label = "2026-27"
+verified = "2026-10-03"
+sources = [
+    "https://www.gov.uk/income-tax-rates",
+    "https://www.gov.uk/government/publications/rates-and-allowances-income-tax/income-tax-rates-and-allowances-current-and-past",
+    "https://www.gov.uk/self-employed-national-insurance-rates",
+    "https://www.gov.uk/government/publications/rates-and-allowances-national-insurance-contributions/rates-and-allowances-national-insurance-contributions",
+    "https://www.gov.uk/guidance/rates-and-thresholds-for-employers-2026-to-2027",
+    "https://www.gov.uk/guidance/tax-free-allowances-on-property-and-trading-income",
+    "https://www.gov.uk/understand-self-assessment-bill/payments-on-account",
+    "https://www.gov.uk/guidance/check-if-youre-eligible-for-making-tax-digital-for-income-tax",
+]
+# Deduct this instead of actual expenses if it's higher.
+trading_allowance = 1000
+# No payments on account if last year's income tax + Class 4 was below this.
+payments_on_account_threshold = 1000
+
+[years.2026.income_tax]
+personal_allowance = 12570
+# The allowance falls by £1 for every £2 of income above this.
+allowance_taper_threshold = 100000
+# `up_to` is taxable income (after the personal allowance); the last band has no limit.
+bands = [
+    { name = "Basic rate", up_to = 37700, rate = 20 },
+    { name = "Higher rate", up_to = 125140, rate = 40 },
+    { name = "Additional rate", rate = 45 },
+]
+
+[years.2026.class4]
+lower_profits_limit = 12570
+upper_profits_limit = 50270
+main_rate = 6
+upper_rate = 2
+
+[years.2026.class2]
+# At or above this, Class 2 is treated as paid (nothing to pay).
+# Below it, Class 2 is voluntary.
+small_profits_threshold = 7105
+weekly_rate = 3.65
+weeks = 52
+
+[years.2026.student_loan]
+plan1 = 26900
+plan2 = 29385
+plan4 = 33795
+plan5 = 25000
+postgraduate = 21000
+rate = 9
+postgraduate_rate = 6
+
+[years.2026.mtd]
+# Qualifying income (turnover) over this in this tax year means Making Tax
+# Digital for Income Tax applies from `start`.
+threshold = 20000
+start = "2028-04-06"
+
+
+[years.2025]
+label = "2025-26"
+verified = "2026-10-03"
+sources = [
+    "https://www.gov.uk/income-tax-rates/previous-tax-years",
+    "https://www.gov.uk/government/publications/rates-and-allowances-income-tax/income-tax-rates-and-allowances-current-and-past",
+    "https://www.gov.uk/government/publications/rates-and-allowances-national-insurance-contributions/rates-and-allowances-national-insurance-contributions",
+    "https://www.gov.uk/guidance/rates-and-thresholds-for-employers-2025-to-2026",
+    "https://www.gov.uk/guidance/tax-free-allowances-on-property-and-trading-income",
+    "https://www.gov.uk/understand-self-assessment-bill/payments-on-account",
+    "https://www.gov.uk/guidance/check-if-youre-eligible-for-making-tax-digital-for-income-tax",
+]
+trading_allowance = 1000
+payments_on_account_threshold = 1000
+
+[years.2025.income_tax]
+personal_allowance = 12570
+allowance_taper_threshold = 100000
+bands = [
+    { name = "Basic rate", up_to = 37700, rate = 20 },
+    { name = "Higher rate", up_to = 125140, rate = 40 },
+    { name = "Additional rate", rate = 45 },
+]
+
+[years.2025.class4]
+lower_profits_limit = 12570
+upper_profits_limit = 50270
+main_rate = 6
+upper_rate = 2
+
+[years.2025.class2]
+small_profits_threshold = 6845
+weekly_rate = 3.50
+weeks = 52
+
+[years.2025.student_loan]
+plan1 = 26065
+plan2 = 28470
+plan4 = 32745
+# Plan 5 repayments start in 2026-27.
+postgraduate = 21000
+rate = 9
+postgraduate_rate = 6
+
+[years.2025.mtd]
+threshold = 30000
+start = "2027-04-06"
+
+
+[years.2024]
+label = "2024-25"
+verified = "2026-10-03"
+sources = [
+    "https://www.gov.uk/government/publications/rates-and-allowances-income-tax/income-tax-rates-and-allowances-current-and-past",
+    "https://www.gov.uk/government/publications/rates-and-allowances-national-insurance-contributions/rates-and-allowances-national-insurance-contributions",
+    "https://www.gov.uk/guidance/rates-and-thresholds-for-employers-2024-to-2025",
+    "https://www.gov.uk/guidance/tax-free-allowances-on-property-and-trading-income",
+    "https://www.gov.uk/understand-self-assessment-bill/payments-on-account",
+    "https://www.gov.uk/guidance/check-if-youre-eligible-for-making-tax-digital-for-income-tax",
+]
+trading_allowance = 1000
+payments_on_account_threshold = 1000
+
+[years.2024.income_tax]
+personal_allowance = 12570
+allowance_taper_threshold = 100000
+bands = [
+    { name = "Basic rate", up_to = 37700, rate = 20 },
+    { name = "Higher rate", up_to = 125140, rate = 40 },
+    { name = "Additional rate", rate = 45 },
+]
+
+[years.2024.class4]
+lower_profits_limit = 12570
+upper_profits_limit = 50270
+main_rate = 6
+upper_rate = 2
+
+[years.2024.class2]
+small_profits_threshold = 6725
+weekly_rate = 3.45
+weeks = 52
+
+[years.2024.student_loan]
+plan1 = 24990
+plan2 = 27295
+plan4 = 31395
+postgraduate = 21000
+rate = 9
+postgraduate_rate = 6
+
+[years.2024.mtd]
+threshold = 50000
+start = "2026-04-06"

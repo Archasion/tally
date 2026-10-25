@@ -7,6 +7,7 @@ mod business_form;
 mod clients;
 mod dashboard;
 mod editor;
+mod expenses;
 mod form;
 mod invoices;
 mod modals;
@@ -27,6 +28,8 @@ use crate::domain::dates::{self, TaxYear};
 use crate::domain::{Business, Client};
 use crate::pdf::Renderer;
 use crate::reports::{self, InvoiceRow};
+use crate::tax::TaxSettings;
+use crate::tax::rates::RatesBook;
 use crate::{backup, paths};
 
 use editor::Editor;
@@ -62,6 +65,7 @@ pub(crate) enum Screen {
     Detail(i64),
     Editor(Box<Editor>),
     Clients,
+    Expenses,
     Reports,
     Settings(Form),
 }
@@ -72,8 +76,9 @@ impl Screen {
             Screen::Wizard(_) | Screen::Dashboard => 0,
             Screen::Invoices | Screen::Detail(_) | Screen::Editor(_) => 1,
             Screen::Clients => 2,
-            Screen::Reports => 3,
-            Screen::Settings(_) => 4,
+            Screen::Expenses => 3,
+            Screen::Reports => 4,
+            Screen::Settings(_) => 5,
         }
     }
 
@@ -127,6 +132,13 @@ pub(crate) struct App {
     pub report_year: TaxYear,
     pub aging_table: TableState,
     pub last_export: Option<PathBuf>,
+    pub expense_year: TaxYear,
+    pub expense_table: TableState,
+    /// Tax rates (built-in + rates.toml), or why rates.toml couldn't be read.
+    pub rates: Result<RatesBook, String>,
+    /// Tax report shows the full-year projection (for the current year).
+    pub tax_projected: bool,
+    pub tax_scroll: u16,
 }
 
 impl App {
@@ -134,7 +146,7 @@ impl App {
         let business = db.business()?;
         let screen = match &business {
             Some(_) => Screen::Dashboard,
-            None => Screen::Wizard(business_form::form(None)),
+            None => Screen::Wizard(business_form::form(None, &TaxSettings::default())),
         };
         let mut app = App {
             db,
@@ -156,7 +168,13 @@ impl App {
             report_year: reports::current_tax_year(),
             aging_table: TableState::default().with_selected(0),
             last_export: None,
+            expense_year: reports::current_tax_year(),
+            expense_table: TableState::default().with_selected(0),
+            rates: Ok(RatesBook::builtin()),
+            tax_projected: true,
+            tax_scroll: 0,
         };
+        app.reload_rates();
         app.refresh()?;
         Ok(app)
     }
@@ -202,6 +220,12 @@ impl App {
     /// Forces the template/fonts to be reloaded (after settings change or to pick up edits).
     pub fn reset_renderer(&mut self) {
         self.renderer = None;
+        self.reload_rates();
+    }
+
+    /// Re-reads tax rates (built-in plus `<output>/rates.toml`).
+    pub fn reload_rates(&mut self) {
+        self.rates = RatesBook::load(&self.output_dir()).map_err(|e| format!("{e:#}"));
     }
 
     pub fn info(&mut self, msg: impl Into<String>) {
@@ -280,11 +304,16 @@ impl App {
                     return Ok(());
                 }
                 KeyCode::Char('4') => {
-                    self.go(Screen::Reports);
+                    self.go(Screen::Expenses);
                     return Ok(());
                 }
                 KeyCode::Char('5') => {
-                    let form = business_form::form(self.business.as_ref());
+                    self.go(Screen::Reports);
+                    return Ok(());
+                }
+                KeyCode::Char('6') => {
+                    let form =
+                        business_form::form(self.business.as_ref(), &self.db.tax_settings()?);
                     self.go(Screen::Settings(form));
                     return Ok(());
                 }
@@ -298,6 +327,7 @@ impl App {
             Screen::Detail(id) => self.key_detail(id, key),
             Screen::Editor(_) => self.key_editor(key),
             Screen::Clients => self.key_clients(key),
+            Screen::Expenses => self.key_expenses(key),
             Screen::Reports => self.key_reports(key),
         }
     }
@@ -322,6 +352,7 @@ impl App {
             Screen::Detail(_) => self.draw_detail(f, body),
             Screen::Editor(_) => self.draw_editor(f, body),
             Screen::Clients => self.draw_clients(f, body),
+            Screen::Expenses => self.draw_expenses(f, body),
             Screen::Reports => self.draw_reports(f, body),
         }
         let help = if self.modal.is_some() {
@@ -359,8 +390,9 @@ impl App {
             "1 Dashboard",
             "2 Invoices",
             "3 Clients",
-            "4 Reports",
-            "5 Settings",
+            "4 Expenses",
+            "5 Reports",
+            "6 Settings",
         ];
         f.render_widget(
             Tabs::new(titles)
@@ -399,7 +431,7 @@ impl App {
                 ("↑↓/Tab", "move"),
                 ("Ctrl+S", "save"),
                 ("Ctrl+B", "back up now"),
-                ("Ctrl+T", "reload template"),
+                ("Ctrl+T", "reload template & rates"),
                 ("Esc", "back"),
             ],
             Screen::Dashboard => vec![("↑↓", "select"), ("Enter", "open"), ("n", "new invoice")],
@@ -420,6 +452,13 @@ impl App {
                 ("i", "invoice"),
                 ("a", "archive"),
                 ("h", "show archived"),
+            ],
+            Screen::Expenses => vec![
+                ("←/→", "tax year"),
+                ("↑↓", "select"),
+                ("n", "new"),
+                ("Enter/e", "edit"),
+                ("d", "delete"),
             ],
             Screen::Reports => self.reports_help(),
         };

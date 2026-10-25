@@ -4,6 +4,7 @@
 mod clients;
 mod invoices;
 mod ledger;
+mod tax;
 
 pub use ledger::TxKind;
 
@@ -20,6 +21,7 @@ use crate::domain::{Address, BankDetails, Business, Client, LineItem, LineKind, 
 const MIGRATIONS: &[&str] = &[
     include_str!("schema.sql"),
     include_str!("002_international_clients.sql"),
+    include_str!("003_expenses_and_tax.sql"),
 ];
 
 pub struct Db {

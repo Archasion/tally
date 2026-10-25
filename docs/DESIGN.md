@@ -24,14 +24,21 @@ src/
   pdf/
     mod.rs           DocumentData (what templates see), Renderer
     world.rs         Sandboxed Typst World: one source, one data file, fonts
-  reports/           Invoice summaries, aging, tax-year income, CSV export
+  reports/           Invoice summaries, aging, tax-year income, tax report
+                     assembly (records + rates), CSV export
+  tax/
+    mod.rs           Pure tax maths: profit, income tax, Class 2/4, student
+                     loans, projection, payments on account, MTD, breakdown
+    rates.rs         Typed per-year rates from rates/uk.toml + rates.toml
+rates/uk.toml        Built-in rates with GOV.UK sources and verified dates
   backup.rs          Online backup + pruning
   paths.rs           Database location, output folder layout, safe filenames
   ui/                ratatui + crossterm full-screen app
     mod.rs           App state, event loop, navigation, chrome
     form.rs          Reusable form widget (text / choice / toggle fields)
     business_form.rs Setup wizard and Settings
-    dashboard.rs, invoices.rs, editor.rs, clients.rs, report_view.rs
+    dashboard.rs, invoices.rs, editor.rs, clients.rs, expenses.rs,
+    report_view.rs   (includes the Tax estimate tab)
     modals.rs        Pop-up forms (payment, refund, credit note, client, line)
                      and confirmations
 templates/invoice.typ  Built-in Typst template (embedded at compile time)
@@ -150,6 +157,30 @@ basis:
 - refunds count in the tax year they were paid out
 - issuing an invoice and raising a credit note don't affect income
 
+### Expenses and tax
+
+- Expenses are recorded on the cash basis (by the date paid), using the
+  categories from the full Self Assessment self-employment pages (SA103F).
+  Depreciation and bad debts are left out: depreciation isn't allowable, and
+  bad debts don't arise on the cash basis.
+- The tax estimate (`tax::estimate`) is pure and works in pence. Rates are
+  stored as basis points, so no floating point reaches the maths. Pounds and
+  percentages in TOML are converted once, on load.
+- Rates are data, not code. `rates/uk.toml` is embedded at compile time, and
+  `<output>/rates.toml` replaces whole years. Unknown fields are rejected, and
+  bands must be in ascending order. A year without rates is reported, never
+  guessed.
+- Every breakdown line carries the rate and threshold it used, and every
+  section carries an obligation (required, optional or not payable), so the
+  TUI and `tally tax` show the same explanation.
+- Payments on account use, in order: the bill you entered for the previous
+  year (`tax_year_bills`), tally's estimate for that year if it has rates,
+  or "unknown".
+- Migration 3 adds `expenses`, the tax settings columns on `business`, and
+  `tax_year_bills`.
+
+See [TAX.md](TAX.md) for the user-facing rules and values.
+
 ### Aging
 
 Outstanding invoices are grouped by days past the due date: not yet due,
@@ -166,6 +197,9 @@ Outstanding invoices are grouped by days past the due date: not yet due,
 | **No `config.toml`** | All settings live in the `business` row, so there's one source of truth that's backed up with your data. Only the database path is fixed (overridable with `TALLY_DB`). |
 | **The database is local, not in the synced folder** | Sync services can corrupt a SQLite file mid-write. The synced folder gets PDFs and atomic backups instead. |
 | **Labels are per client with their own sequences, not a business-wide prefix** | Requested: invoices to each client are numbered separately (LGT-…-0001, ACM-…-0001). |
+| **Tax rates in a TOML file, overridable** | Rates change every April. Users can add a year (or fix a figure) without a new release, and every year records its sources and verification date. |
+| **England, Wales & NI income tax only; self-employment the only income** | As requested. Scottish bands and other income would change the band calculation and aren't modelled. |
+| **Voluntary Class 2 is opt-in** | It's optional, so it's shown but only added to the bill when Settings says you'll pay it. |
 | **Labels lock once used** | Changing a label after issuing would split one client's numbering into two series. |
 | **Structured address fields, not a multi-line text area** | `tui-textarea` doesn't support ratatui 0.30. Separate fields also give cleaner PDFs. |
 | **Credit notes from the TUI have one line** | The data model and PDF support several lines. The UI keeps the common case (one amount plus a reason) quick. |

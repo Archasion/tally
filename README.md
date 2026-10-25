@@ -6,7 +6,7 @@ in a local SQLite database, and writes each invoice as an A4 PDF using an
 embedded [Typst](https://typst.app) compiler. No external tools are needed.
 
 ```
- tally   1 Dashboard   2 Invoices   3 Clients   4 Reports   5 Settings
+ tally   1 Dashboard   2 Invoices   3 Clients   4 Expenses   5 Reports   6 Settings
 
  ┌ Outstanding ─────────┐ ┌ Overdue ─────────────┐ ┌ Income 2026-27 ──────┐ ┌ Drafts ──────────────┐
  │ £1,800.00            │ │ £1,800.00            │ │ £1,650.00            │ │ 0                    │
@@ -39,6 +39,19 @@ embedded [Typst](https://typst.app) compiler. No external tools are needed.
 - **Partial payments, overpayments and refunds.**
 - **Optional late-payment notice** for business clients (statutory interest
   under the Late Payment of Commercial Debts Act).
+- **Expenses** grouped by the Self Assessment categories, with totals per tax
+  year ready for your return.
+- **Tax estimate:**
+  - income tax, Class 4 and Class 2 National Insurance, and student loan
+    repayments, each marked required, optional or not payable
+  - every rate and threshold used, with the GOV.UK sources and the date they
+    were checked
+  - year-to-date and full-year projections
+  - payments on account and due dates
+  - Making Tax Digital warnings
+
+  Rates are built in for 2024-25 to 2026-27. You can add or correct a year in
+  a `rates.toml` file without updating tally. See [docs/TAX.md](docs/TAX.md).
 - **Reports:**
   - outstanding and overdue invoices, grouped by days late
   - tax-year income (6 April to 5 April) on a cash basis
@@ -73,7 +86,8 @@ Running `tally` the first time opens a setup wizard that asks for:
 - your invoice and credit-note number patterns
 - an **output folder** for PDFs, backups and exports
 
-Everything can be changed later under **5 Settings**. Changes only affect
+Everything can be changed later under **6 Settings**, which also has the tax
+settings (student loan plan, voluntary Class 2). Changes only affect
 invoices you issue after that, because issued invoices keep the details they
 were issued with.
 
@@ -92,7 +106,9 @@ were issued with.
 | Refund an overpayment or credit | `r` (only offered when money is owed back) |
 | Open or regenerate the PDF | `o` / `R` |
 | Duplicate an invoice as a new draft | `u` |
-| Reports | `4`, then `Tab` to switch reports and `←`/`→` to change tax year |
+| Record an expense | `4`, then `n` (`←`/`→` changes tax year) |
+| Reports | `5`, then `Tab` to switch reports and `←`/`→` to change tax year |
+| Tax estimate | `5`, `Tab` to *Tax estimate*; `p` switches year to date / projected, `b` enters last year's bill |
 | Back up now | `Ctrl+B` in Settings, or `tally backup` |
 | Quit (backs up automatically) | `q` or `Ctrl+C` |
 
@@ -107,6 +123,9 @@ to save and `Esc` to cancel. Dates can be typed as `2026-10-02`,
 tally                     Open the full-screen app
 tally backup              Back up the database to <output folder>/backups
 tally sample-pdf [FILE]   Render a sample invoice (good for testing a template)
+tally tax [YEAR] [--projected]
+                          Print the tax estimate, e.g. `tally tax 2025-26`
+tally rates               Print the built-in tax rates (rates.toml format)
 tally where               Show where the database and output folder are
 tally help                Show help
 ```
@@ -124,6 +143,7 @@ things out.
 | CSV exports | `<output folder>/exports/YYYYMMDD-HHMMSS/` |
 | Template override (optional) | `<output folder>/template.typ` |
 | Extra fonts (optional) | `<output folder>/fonts/*.ttf` / `*.otf` |
+| Tax rates override (optional) | `<output folder>/rates.toml` |
 
 The live database is deliberately kept out of the synced folder. Sync
 services can corrupt an SQLite file by copying it while it's being written.
@@ -159,6 +179,10 @@ What the app does on your behalf, and why:
   the default for sole traders since April 2024.
 - **Late-payment notice.** The notice can only be switched on for business
   clients, because statutory interest doesn't apply to individuals.
+
+- **Tax estimate.** It uses England, Wales and NI income tax rates and
+  assumes self-employment is your only income. [docs/TAX.md](docs/TAX.md)
+  lists exactly what it covers and what it doesn't.
 
 tally is a record-keeping tool, not tax advice.
 

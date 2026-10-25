@@ -9,8 +9,11 @@ use chrono::{Datelike, Local, NaiveDate};
 
 use crate::db::{Db, TxKind};
 use crate::domain::dates::{self, TaxYear};
+use crate::domain::expense::{Expense, ExpenseCategory};
 use crate::domain::{Invoice, Money, Status, Totals, Transaction};
 use crate::paths;
+use crate::tax::rates::{RatesBook, YearRates};
+use crate::tax::{self, TaxSettings};
 
 /// An invoice with everything needed to list it.
 #[derive(Debug, Clone)]
@@ -197,7 +200,7 @@ fn first_of_next_month(d: NaiveDate) -> NaiveDate {
     NaiveDate::from_ymd_opt(y, m, 1).expect("valid date")
 }
 
-/// Writes invoices.csv, payments.csv, refunds.csv and credit_notes.csv into
+/// Writes invoices.csv, payments.csv, refunds.csv, credit_notes.csv and expenses.csv into
 /// `<output>/exports/<timestamp>/`. Amounts are plain decimals (e.g. 1250.00)
 /// so spreadsheets treat them as numbers.
 pub fn export_csv(db: &Db, output_dir: &Path, today: NaiveDate) -> Result<PathBuf> {
@@ -284,7 +287,100 @@ pub fn export_csv(db: &Db, output_dir: &Path, today: NaiveDate) -> Result<PathBu
         ])?;
     }
     w.flush()?;
+
+    let mut w = csv::Writer::from_path(dir.join("expenses.csv"))?;
+    w.write_record([
+        "date",
+        "tax_year",
+        "category",
+        "description",
+        "amount",
+        "notes",
+    ])?;
+    for e in db.expenses(None)? {
+        w.write_record([
+            e.date.to_string(),
+            TaxYear::containing(e.date).label(),
+            e.category.label().to_string(),
+            e.description,
+            e.amount.to_decimal_string(),
+            e.notes,
+        ])?;
+    }
+    w.flush()?;
     Ok(dir)
+}
+
+/// Expense totals per category, in form order, skipping empty categories.
+pub fn expense_totals(expenses: &[Expense]) -> Vec<(ExpenseCategory, Money)> {
+    ExpenseCategory::ALL
+        .into_iter()
+        .map(|c| {
+            (
+                c,
+                expenses
+                    .iter()
+                    .filter(|e| e.category == c)
+                    .map(|e| e.amount)
+                    .sum(),
+            )
+        })
+        .filter(|(_, m): &(ExpenseCategory, Money)| !m.is_zero())
+        .collect()
+}
+
+/// Turnover (received − refunded) and expenses paid in a tax year.
+pub fn tax_figures(db: &Db, year: TaxYear) -> Result<tax::Figures> {
+    Ok(tax::Figures {
+        turnover: income(db, year)?.net(),
+        expenses: db.expenses(Some(year))?.iter().map(|e| e.amount).sum(),
+    })
+}
+
+/// Everything the tax report shows for one year.
+#[derive(Debug, Clone)]
+pub struct TaxView {
+    pub rates: YearRates,
+    pub settings: TaxSettings,
+    /// Figures to date (or the whole year, once it's over).
+    pub actual: tax::Estimate,
+    /// Full-year projection while the year is in progress.
+    pub projected: Option<(tax::Projection, tax::Estimate)>,
+    pub prior: tax::PriorBill,
+    pub as_of: NaiveDate,
+}
+
+pub enum TaxReport {
+    Ready(Box<TaxView>),
+    /// No rates for this year (built-in or rates.toml).
+    NoRates(TaxYear),
+}
+
+pub fn tax_report(db: &Db, book: &RatesBook, year: TaxYear, today: NaiveDate) -> Result<TaxReport> {
+    let Some(rates) = book.get(year) else {
+        return Ok(TaxReport::NoRates(year));
+    };
+    let settings = db.tax_settings()?;
+    let figures = tax_figures(db, year)?;
+    let actual = tax::estimate(rates, figures, &settings);
+    let projected =
+        tax::project(year, figures, today).map(|p| (p, tax::estimate(rates, p.figures, &settings)));
+    let previous = year.prev();
+    let prior = match (db.entered_bill(previous)?, book.get(previous)) {
+        (Some(m), _) => tax::PriorBill::Entered(m),
+        (None, Some(prev_rates)) => tax::PriorBill::Calculated(
+            tax::estimate(prev_rates, tax_figures(db, previous)?, &settings).poa_basis(),
+        ),
+        (None, None) => tax::PriorBill::Unknown,
+    };
+    Ok(TaxReport::Ready(Box::new(TaxView {
+        rates: rates.clone(),
+        settings,
+        actual,
+        projected,
+        prior,
+        as_of: tax::as_of(year, today),
+    })))
 }
 
 /// Headline numbers for the dashboard.
@@ -321,6 +417,127 @@ pub fn overview(rows: &[InvoiceRow]) -> Overview {
 
 pub fn current_tax_year() -> TaxYear {
     TaxYear::containing(dates::today())
+}
+
+/// The estimate to show: the projection if asked for and available.
+impl TaxView {
+    pub fn shown(&self, projected: bool) -> (&tax::Estimate, bool) {
+        match (&self.projected, projected) {
+            (Some((_, e)), true) => (e, true),
+            _ => (&self.actual, false),
+        }
+    }
+
+    /// e.g. `Year to date, to 3 October 2026 (181 of 365 days)`.
+    pub fn basis_line(&self, projected: bool) -> String {
+        let (_, is_projected) = self.shown(projected);
+        match &self.projected {
+            Some((p, _)) if is_projected => format!(
+                "Projected to 5 April from {} days of {} (figures scaled by {}/{})",
+                p.elapsed_days, p.total_days, p.total_days, p.elapsed_days
+            ),
+            Some((p, _)) => format!(
+                "Year to date, to {} ({} of {} days)",
+                dates::long(self.as_of),
+                p.elapsed_days,
+                p.total_days
+            ),
+            None if self.as_of < self.actual.year.start() => "Tax year hasn't started".into(),
+            None => "Whole tax year".into(),
+        }
+    }
+
+    pub fn schedule(&self, projected: bool) -> (Vec<tax::DuePayment>, Vec<String>) {
+        tax::payment_schedule(self.shown(projected).0, &self.rates, self.prior)
+    }
+
+    pub fn mtd_notice(&self, projected: bool) -> Option<String> {
+        let (e, is_projected) = self.shown(projected);
+        let basis = match (is_projected, &self.projected) {
+            (true, _) => tax::Basis::Projected,
+            (false, Some(_)) => tax::Basis::SoFar,
+            (false, None) => tax::Basis::FullYear,
+        };
+        tax::mtd_notice(&self.rates, e.figures.turnover, basis)
+    }
+}
+
+pub const TAX_DISCLAIMER: &str = "An estimate for a sole trader whose only income is self-employment, using the rates shown. Not tax advice: check your Self Assessment calculation before paying.";
+
+/// Plain-text tax report (for `tally tax`).
+pub fn tax_text(view: &TaxView, projected: bool) -> String {
+    use std::fmt::Write as _;
+    let (est, _) = view.shown(projected);
+    let y = est.year;
+    let mut out = String::new();
+    let _ = writeln!(
+        out,
+        "Tax estimate {} ({} to {})",
+        y.label(),
+        dates::long(y.start()),
+        dates::long(y.end())
+    );
+    let _ = writeln!(out, "Rates:   {}", view.rates.provenance());
+    let _ = writeln!(out, "Figures: {}", view.basis_line(projected));
+    if let Some((_, p)) = &view.projected {
+        let other = if projected { &view.actual } else { p };
+        let which = if projected {
+            "Year to date"
+        } else {
+            "Projected full year"
+        };
+        let _ = writeln!(out, "         {which}: {}", other.total());
+    }
+    for line in tax::breakdown(est, &view.rates) {
+        let amount = line.amount.map(|m| m.to_string()).unwrap_or_default();
+        match line.kind {
+            tax::LineKind::Heading => {
+                let tag = line
+                    .obligation
+                    .map(|o| format!("[{}]", o.label()))
+                    .unwrap_or_default();
+                let _ = writeln!(out, "\n{:<52}{tag:>14}", line.label.to_uppercase());
+            }
+            tax::LineKind::Note => {
+                let _ = writeln!(out, "  {}", line.label);
+            }
+            tax::LineKind::Total => {
+                let _ = writeln!(out, "\n{:<52}{amount:>14}", line.label.to_uppercase());
+                if !line.detail.is_empty() {
+                    let _ = writeln!(out, "  {}", line.detail);
+                }
+            }
+            tax::LineKind::Item | tax::LineKind::Subtotal => {
+                let _ = writeln!(out, "  {:<50}{amount:>14}", line.label);
+                if !line.detail.is_empty() {
+                    let _ = writeln!(out, "      {}", line.detail);
+                }
+            }
+        }
+    }
+    let (payments, notes) = view.schedule(projected);
+    let _ = writeln!(out, "\nPAYMENTS DUE TO HMRC");
+    for p in &payments {
+        let _ = writeln!(
+            out,
+            "  {}  {:<62}{:>14}",
+            dates::short(p.due),
+            p.what,
+            p.amount.to_string()
+        );
+    }
+    for n in notes {
+        let _ = writeln!(out, "  {n}");
+    }
+    if let Some(n) = view.mtd_notice(projected) {
+        let _ = writeln!(out, "\n{n}");
+    }
+    let _ = writeln!(out, "\nSources:");
+    for s in &view.rates.sources {
+        let _ = writeln!(out, "  {s}");
+    }
+    let _ = writeln!(out, "\n{TAX_DISCLAIMER}");
+    out
 }
 
 #[cfg(test)]

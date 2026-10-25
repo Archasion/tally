@@ -49,6 +49,11 @@ pub fn template_override(output_dir: &Path) -> PathBuf {
     output_dir.join("template.typ")
 }
 
+/// Optional tax rates that add to or replace the built-in years.
+pub fn rates_override(output_dir: &Path) -> PathBuf {
+    output_dir.join("rates.toml")
+}
+
 pub fn fonts_dir(output_dir: &Path) -> PathBuf {
     output_dir.join("fonts")
 }

@@ -9,6 +9,8 @@ use ratatui::widgets::Clear;
 use super::form::{Form, Outcome};
 use super::{App, Modal, Screen, centered, popup_block, render_popup_text};
 use crate::db::TxKind;
+use crate::domain::dates::TaxYear;
+use crate::domain::expense::{Expense, ExpenseCategory};
 use crate::domain::{Address, Client, LineItem, LineKind, Money, Quantity, Transaction, dates};
 
 /// What a pop-up form is for.
@@ -22,6 +24,10 @@ pub enum Purpose {
     MarkSent(i64),
     /// A line in the editor: `None` adds, `Some(i)` replaces line `i`.
     Line(Option<usize>),
+    NewExpense,
+    EditExpense(i64),
+    /// Income tax + Class 4 for a tax year, from an HMRC statement.
+    PriorBill(TaxYear),
 }
 
 /// What a confirmation does when accepted.
@@ -31,6 +37,7 @@ pub enum Action {
     DeleteDraft(i64),
     Regenerate(i64),
     DeleteTx(TxKind, i64),
+    DeleteExpense(i64),
     DiscardEditor,
     Quit,
 }
@@ -236,6 +243,45 @@ impl App {
                         .hint("Clear the date and save to mark it as not sent"),
                 )
             }
+            Purpose::NewExpense | Purpose::EditExpense(_) => {
+                let existing = match purpose {
+                    Purpose::EditExpense(id) => self.db.expense(id).ok(),
+                    _ => None,
+                };
+                let category = existing.as_ref().map(|e| e.category).unwrap_or(ExpenseCategory::Other);
+                let index = ExpenseCategory::ALL.iter().position(|c| *c == category).unwrap_or(0);
+                let title = if existing.is_some() { "Edit expense" } else { "New expense" };
+                (
+                    title.to_string(),
+                    Form::new()
+                        .text("date", "Date paid", existing.as_ref().map(|e| e.date.to_string()).unwrap_or(today))
+                        .required()
+                        .hint("The date the money left your account (cash basis)")
+                        .text("description", "Description", existing.as_ref().map(|e| e.description.clone()).unwrap_or_default())
+                        .required()
+                        .choice(
+                            "category",
+                            "Category",
+                            ExpenseCategory::ALL.iter().map(|c| c.label().to_string()).collect(),
+                            index,
+                        )
+                        .hint(ExpenseCategory::ALL[index].hint())
+                        .text("amount", "Amount (£)", existing.as_ref().map(|e| e.amount.to_decimal_string()).unwrap_or_default())
+                        .required()
+                        .hint("The business part only, if it was partly personal")
+                        .text("notes", "Notes", existing.map(|e| e.notes).unwrap_or_default())
+                        .hint("Optional, e.g. receipt reference"),
+                )
+            }
+            Purpose::PriorBill(year) => {
+                let current = self.db.entered_bill(year).ok().flatten().map(|m| m.to_decimal_string()).unwrap_or_default();
+                (
+                    format!("Your {} bill (income tax + Class 4)", year.label()),
+                    Form::new()
+                        .text("amount", "Amount (£)", current)
+                        .hint("From your HMRC tax calculation (SA302). Leave empty to use tally's estimate"),
+                )
+            }
             Purpose::Line(_) => unreachable!("line forms are opened with line_form"),
         };
         self.modal = Some(Modal::Form {
@@ -292,7 +338,16 @@ impl App {
                     }
                     Ok(())
                 }
-                _ => {
+                outcome => {
+                    // Keep the category hint in step with the selected category.
+                    if outcome == Outcome::Changed
+                        && matches!(purpose, Purpose::NewExpense | Purpose::EditExpense(_))
+                        && form.focused_key() == "category"
+                    {
+                        let hint = ExpenseCategory::ALL[form.selected("category")].hint();
+                        let focus = form.focus;
+                        form.fields[focus].hint = hint.to_string();
+                    }
                     self.modal = Some(Modal::Form {
                         title,
                         form,
@@ -482,6 +537,50 @@ impl App {
                     None => "Marked as not sent".to_string(),
                 });
             }
+            Purpose::NewExpense | Purpose::EditExpense(_) => {
+                let Some(date) = date_field(form, "date") else {
+                    return Ok(false);
+                };
+                let Some(amount) = money_field(form, "amount", false) else {
+                    return Ok(false);
+                };
+                let expense = Expense {
+                    id: match purpose {
+                        Purpose::EditExpense(id) => id,
+                        _ => 0,
+                    },
+                    date,
+                    description: form.value("description"),
+                    category: ExpenseCategory::ALL[form.selected("category")],
+                    amount,
+                    notes: form.value("notes"),
+                };
+                self.db.save_expense(&expense)?;
+                // Show the year the expense landed in.
+                self.expense_year = TaxYear::containing(date);
+                self.success(format!(
+                    "Saved {} expense in {}",
+                    amount,
+                    self.expense_year.label()
+                ));
+            }
+            Purpose::PriorBill(year) => {
+                let amount = match form.value("amount").as_str() {
+                    "" => None,
+                    _ => match money_field(form, "amount", true) {
+                        Some(m) => Some(m),
+                        None => return Ok(false),
+                    },
+                };
+                self.db.set_entered_bill(year, amount)?;
+                self.success(match amount {
+                    Some(m) => format!(
+                        "Using {m} as your {} bill for payments on account",
+                        year.label()
+                    ),
+                    None => format!("Using tally's estimate for {}", year.label()),
+                });
+            }
             Purpose::Line(index) => {
                 let quantity = match Quantity::parse(&form.value("quantity")) {
                     Ok(q) => q,
@@ -518,6 +617,10 @@ impl App {
             Action::Regenerate(id) => {
                 let path = self.regenerate(id)?;
                 self.success(format!("Regenerated {}", crate::paths::display(&path)));
+            }
+            Action::DeleteExpense(id) => {
+                self.db.delete_expense(id)?;
+                self.success("Expense deleted");
             }
             Action::DeleteTx(kind, tx_id) => {
                 self.db.delete_transaction(kind, tx_id)?;
@@ -556,7 +659,24 @@ impl App {
                     .map(|f| f.label.len())
                     .max()
                     .unwrap_or(10) as u16;
-                let width = (label_width + 50).max(60);
+                // Wide enough for the longest hint or choice, within the screen.
+                let content = form
+                    .fields
+                    .iter()
+                    .map(|f| match &f.kind {
+                        super::form::FieldKind::Choice(opts) => {
+                            label_width as usize
+                                + 8
+                                + opts.iter().map(|o| o.chars().count()).max().unwrap_or(0)
+                        }
+                        _ => f.hint.chars().count() + 4,
+                    })
+                    .max()
+                    .unwrap_or(0) as u16;
+                let width = (label_width + 50)
+                    .max(60)
+                    .max(content)
+                    .min(f.area().width.saturating_sub(4));
                 let area = centered(f.area(), width, form.height() + 3);
                 f.render_widget(Clear, area);
                 let block = popup_block(title).padding(ratatui::widgets::Padding::new(1, 1, 1, 0));

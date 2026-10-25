@@ -148,6 +148,47 @@ fn full_invoice_lifecycle() {
     let y27 = reports::income(&db, TaxYear(2027)).unwrap();
     assert_eq!(y27.net(), Money::parse("-450").unwrap());
 
+    // Tax: £600 of expenses is under the £1,000 trading allowance, so the allowance is used.
+    db.save_expense(&tally::domain::expense::Expense {
+        id: 0,
+        date: d(2026, 6, 1),
+        description: "Software".into(),
+        category: tally::domain::expense::ExpenseCategory::Office,
+        amount: Money::parse("600").unwrap(),
+        notes: String::new(),
+    })
+    .unwrap();
+    let book = tally::tax::rates::RatesBook::load(&out).unwrap();
+    let reports::TaxReport::Ready(view) =
+        reports::tax_report(&db, &book, TaxYear(2026), today).unwrap()
+    else {
+        panic!("2026-27 rates are built in");
+    };
+    assert_eq!(view.actual.figures.turnover, Money::parse("1800").unwrap());
+    assert_eq!(
+        view.actual.deduction,
+        tally::tax::Deduction::TradingAllowance(Money::parse("1000").unwrap())
+    );
+    assert_eq!(view.actual.profit, Money::parse("800").unwrap());
+    assert!(reports::tax_text(&view, false).contains("Voluntary contributions"));
+
+    // No 2027-28 rates until rates.toml provides them.
+    assert!(matches!(
+        reports::tax_report(&db, &book, TaxYear(2027), today).unwrap(),
+        reports::TaxReport::NoRates(_)
+    ));
+    let next_year = tally::tax::rates::BUILTIN_RATES
+        .split("\n\n\n[years.2025]")
+        .next()
+        .unwrap()
+        .replace("[years.2026", "[years.2027");
+    std::fs::write(paths::rates_override(&out), next_year).unwrap();
+    let book = tally::tax::rates::RatesBook::load(&out).unwrap();
+    assert!(matches!(
+        reports::tax_report(&db, &book, TaxYear(2027), today).unwrap(),
+        reports::TaxReport::Ready(_)
+    ));
+
     // Export and backups.
     let export = reports::export_csv(&db, &out, today).unwrap();
     let invoices_csv = std::fs::read_to_string(export.join("invoices.csv")).unwrap();
