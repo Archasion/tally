@@ -34,6 +34,8 @@ embedded [Typst](https://typst.app) compiler. No external tools are needed.
 - **International clients:** each client has a country, which is always
   printed, and an optional tax ID with its local name, e.g. *VAT ID:
   DE123456789* or *ABN: 51 824 753 556*. Amounts are always in GBP.
+  Invoices to clients outside the UK also show your IBAN, BIC and bank, if
+  set in Settings.
 - **Status tracking:** Draft → Issued → Sent → Part paid → Paid, with
   Overdue and Credited worked out automatically.
 - **Partial payments, overpayments and refunds.**
@@ -119,7 +121,7 @@ were issued with.
 | Record a payment | `p` (pre-filled with the balance) |
 | Credit note | `c` |
 | Refund an overpayment or credit | `r` (only offered when money is owed back) |
-| Open or regenerate the PDF | `o` / `R` |
+| Open or regenerate the PDF | `o` / `R` (`R` asks whether to keep the details as issued or update them to your current ones, e.g. to add an IBAN) |
 | Duplicate an invoice as a new draft | `u` |
 | Record an expense | `4`, then `n` (`←`/`→` changes tax year). Set *Rebill to* for a purchase a client reimburses |
 | Next payment of a subscription | `u` on the expense |

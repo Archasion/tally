@@ -30,6 +30,8 @@ pub enum Purpose {
     NextPayment(i64),
     /// Pick a rebillable expense to add to the draft in the editor.
     Reimbursement,
+    /// Regenerate an issued invoice's PDF, keeping or updating its details.
+    Regenerate(i64),
     /// Income tax + Class 4 for a tax year, from an HMRC statement.
     PriorBill(TaxYear),
 }
@@ -39,7 +41,8 @@ pub enum Purpose {
 pub enum Action {
     Issue(i64),
     DeleteDraft(i64),
-    Regenerate(i64),
+    /// Update an issued invoice to the current details, then regenerate it.
+    UpdateDetails(i64),
     DeleteTx(TxKind, i64),
     DeleteExpense(i64),
     DiscardEditor,
@@ -150,6 +153,15 @@ pub fn line_form(
         title: title.into(),
         form,
         purpose: Purpose::Line(index),
+    }
+}
+
+/// `a`, `a and b`, `a, b and c`.
+fn join_phrases(items: &[&str]) -> String {
+    match items {
+        [] => String::new(),
+        [one] => one.to_string(),
+        [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
     }
 }
 
@@ -349,6 +361,29 @@ impl App {
                     Form::new()
                         .choice("expense", "Purchase", options.iter().map(reimbursement_label).collect(), 0)
                         .hint(&hint),
+                )
+            }
+            Purpose::Regenerate(id) => {
+                let warning = if crate::paths::template_override(&self.output_dir()).is_file() {
+                    ". Your template.typ override is used either way"
+                } else {
+                    ""
+                };
+                (
+                    format!("Regenerate the PDF for {}", number(self, id)),
+                    Form::new()
+                        .choice(
+                            "how",
+                            "Details",
+                            vec![
+                                "Keep them as issued".into(),
+                                "Update to my current business and client details".into(),
+                            ],
+                            0,
+                        )
+                        .hint(&format!(
+                            "The number, dates, lines and amounts never change{warning}"
+                        )),
                 )
             }
             Purpose::PriorBill(year) => {
@@ -716,6 +751,34 @@ impl App {
                     self.expense_year.label()
                 ));
             }
+            Purpose::Regenerate(id) => {
+                let changes = if form.selected("how") == 1 {
+                    self.detail_changes(id)?
+                } else {
+                    Vec::new()
+                };
+                if changes.is_empty() {
+                    let (path, receipts) = self.regenerate(id)?;
+                    let note = if form.selected("how") == 1 {
+                        "Nothing printed had changed, so the details were kept. "
+                    } else {
+                        ""
+                    };
+                    self.success(format!(
+                        "{note}Regenerated{receipts}: {}",
+                        crate::paths::display(&path)
+                    ));
+                } else {
+                    self.confirm(
+                        format!(
+                            "Update {} to your current details?\n\nThis changes {}.\n\nThe new PDF will differ from the one you sent, so send the client the new copy. The number, dates, lines and amounts don't change, and the invoice records that its details were updated.",
+                            self.db.invoice(id)?.display_number(),
+                            join_phrases(&changes)
+                        ),
+                        Action::UpdateDetails(id),
+                    );
+                }
+            }
             Purpose::Reimbursement => {
                 let options = self.reimbursement_options()?;
                 let Some(e) = options.get(form.selected("expense")) else {
@@ -803,10 +866,12 @@ impl App {
                 self.go(Screen::Invoices);
                 self.success("Draft deleted");
             }
-            Action::Regenerate(id) => {
+            Action::UpdateDetails(id) => {
+                self.db.update_issued_details(id, dates::today())?;
+                self.refresh()?;
                 let (path, receipts) = self.regenerate(id)?;
                 self.success(format!(
-                    "Regenerated{receipts}: {}",
+                    "Updated the details and regenerated{receipts}: {}",
                     crate::paths::display(&path)
                 ));
             }

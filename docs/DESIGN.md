@@ -87,7 +87,16 @@ Draft ──issue──▶ Issued ──mark sent──▶ Sent
   If the PDF fails, everything rolls back and the number is not used up.
 - **Locked:** once issued, an invoice's content can't change and it can't be
   deleted. This is enforced in Rust *and* by SQLite triggers, so even a manual
-  `UPDATE` is rejected. Only `sent_on` can change.
+  `UPDATE` is rejected. Only `sent_on` can change, plus the details
+  snapshot through `update_issued_details` (below).
+- **Updating details** (`R` → *Update to my current details*, migration 6)
+  replaces an issued invoice's business and client snapshot with the current
+  one, after a confirmation listing what will look different
+  (`Snapshot::printed_changes`). It's on the record: a trigger only allows a
+  snapshot change that also sets a new `details_updated_on`, and that keeps
+  the client label the number was made with. The invoice screen shows the
+  date. The number, dates, notes, lines and amounts stay locked. Credit notes
+  keep their own snapshots.
 - **Status is calculated, never stored**, by `Totals::status`, from:
   - total, payments, credit notes and refunds
   - whether it's been issued and sent
@@ -155,6 +164,13 @@ Draft ──issue──▶ Issued ──mark sent──▶ Sent
   *DE123456789*), printed under the client's address. You must fill in both
   or neither.
 - All amounts are in **GBP**; there's no currency conversion.
+- **IBAN, BIC, bank name and address** (Settings, migration 5) are printed
+  only when the client's country isn't the UK (`bank::is_uk`, which accepts
+  common spellings and treats an empty country as the UK) and an IBAN is set.
+  UK payers keep the simpler box. The IBAN is stored without spaces after a
+  mod-97 check. A UK IBAN must contain your sort code and account number,
+  and the BIC must be for the same country. The new fields use
+  `#[serde(default)]`, so older snapshots render without them.
 - New client fields use `#[serde(default)]`, so snapshots on invoices issued
   before these fields existed still load and render unchanged.
 
@@ -257,6 +273,7 @@ Outstanding invoices are grouped by days past the due date: not yet due,
 | **Tax rates in a TOML file, overridable** | Rates change every April. Users can add a year (or fix a figure) without a new release, and every year records its sources and verification date. |
 | **England, Wales & NI income tax only; self-employment the only income** | As requested. Scottish bands and other income would change the band calculation and aren't modelled. |
 | **Voluntary Class 2 is opt-in** | It's optional, so it's shown but only added to the bill when Settings says you'll pay it. |
+| **Issued details can be updated, on the record** | Fixing a typo in an address, or adding an IBAN for a client abroad, shouldn't need a credit note and a new invoice. The amounts and number never change, and the update is dated on the invoice. |
 | **Labels lock once used** | Changing a label after issuing would split one client's numbering into two series. |
 | **Structured address fields, not a multi-line text area** | `tui-textarea` doesn't support ratatui 0.30. Separate fields also give cleaner PDFs. |
 | **Credit notes from the TUI have one line** | The data model and PDF support several lines. The UI keeps the common case (one amount plus a reason) quick. |

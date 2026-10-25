@@ -19,9 +19,12 @@ line number. Nothing is issued and no number is used up.
 Delete `template.typ` to go back to the built-in design.
 
 > **Regenerating old PDFs.** `R` on an issued invoice re-renders it with the
-> details frozen when it was issued, but with the **current** template. If
-> you've changed the template since, the new PDF will look different from the
-> one you sent, and tally warns you before it overwrites the file.
+> **current** template. By default it keeps the details frozen when the
+> invoice was issued; you can choose to update them to your current business
+> and client details instead, after a confirmation listing what changes.
+> Either way, if you've changed the template since, the new PDF will look
+> different from the one you sent, and tally says so before it overwrites
+> the file.
 
 ## Fonts
 
@@ -74,7 +77,9 @@ string. Money is already formatted (`£1,800.00`) and dates are written out
 | `lines[].detail` | `"Monthly subscription, paid 3 October 2026 · Approved by Jo Smith on 1 October 2026 · Supplier invoice JB-4471"` | smaller text under the description; `""` except on reimbursements |
 | `total_label` | `"Total due"` / `"Total credited"` | |
 | `total` | `"£1,800.00"` | |
-| `payment` | `{account_name, sort_code, account_number, reference, terms}` or `none` | `none` on credit notes; `reference` is the invoice number |
+| `payment` | `{account_name, sort_code, account_number, iban, bic, bank, reference, terms}` or `none` | `none` on credit notes; `reference` is the invoice number |
+| `payment.iban`, `payment.bic` | `"GB29 NWBK 6016 1331 9268 19"`, `"NWBKGB2L"` | only for clients outside the UK when set in Settings, otherwise `""` |
+| `payment.bank` | `"NatWest, 250 Bishopsgate, London EC2M 4AA"` | bank name and address, same rule; `""` if not set |
 | `notes` | `"Thank you for your business."` | may be `""` |
 | `late_payment_notice` | statutory interest wording, or `""` | only for business clients with the notice switched on |
 

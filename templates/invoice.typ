@@ -122,6 +122,9 @@
       [Account name], data.payment.account_name,
       [Sort code], data.payment.sort_code,
       [Account number], data.payment.account_number,
+      // International details, only for clients outside the UK.
+      ..if data.payment.iban != "" { ([IBAN], data.payment.iban, [BIC / SWIFT], data.payment.bic) },
+      ..if data.payment.bank != "" { ([Bank], data.payment.bank) },
       [Reference], text(weight: "bold", data.payment.reference),
     )
     #v(0.3em)

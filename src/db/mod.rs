@@ -25,6 +25,8 @@ const MIGRATIONS: &[&str] = &[
     include_str!("002_international_clients.sql"),
     include_str!("003_expenses_and_tax.sql"),
     include_str!("004_reimbursements.sql"),
+    include_str!("005_international_payments.sql"),
+    include_str!("006_update_issued_details.sql"),
 ];
 
 pub struct Db {
@@ -98,8 +100,10 @@ impl Db {
         self.conn.execute(
             "INSERT INTO business (id, name, address_line1, address_line2, town, postcode, email, phone,
                 bank_account_name, bank_sort_code, bank_account_number, payment_terms_days,
-                default_notes, invoice_pattern, credit_note_pattern, output_dir, backups_to_keep)
-             VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
+                default_notes, invoice_pattern, credit_note_pattern, output_dir, backups_to_keep,
+                bank_iban, bank_bic, bank_name, bank_address)
+             VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16,
+                ?17, ?18, ?19, ?20)
              ON CONFLICT (id) DO UPDATE SET
                 name = excluded.name, address_line1 = excluded.address_line1,
                 address_line2 = excluded.address_line2, town = excluded.town,
@@ -111,7 +115,9 @@ impl Db {
                 default_notes = excluded.default_notes,
                 invoice_pattern = excluded.invoice_pattern,
                 credit_note_pattern = excluded.credit_note_pattern,
-                output_dir = excluded.output_dir, backups_to_keep = excluded.backups_to_keep",
+                output_dir = excluded.output_dir, backups_to_keep = excluded.backups_to_keep,
+                bank_iban = excluded.bank_iban, bank_bic = excluded.bank_bic,
+                bank_name = excluded.bank_name, bank_address = excluded.bank_address",
             params![
                 b.name,
                 b.address.line1,
@@ -129,6 +135,10 @@ impl Db {
                 b.credit_note_pattern,
                 b.output_dir,
                 b.backups_to_keep,
+                b.bank.iban,
+                b.bank.bic,
+                b.bank.bank_name,
+                b.bank.bank_address,
             ],
         )?;
         Ok(())
@@ -209,6 +219,10 @@ fn business_from_row(r: &Row) -> rusqlite::Result<Business> {
             account_name: r.get("bank_account_name")?,
             sort_code: r.get("bank_sort_code")?,
             account_number: r.get("bank_account_number")?,
+            iban: r.get("bank_iban")?,
+            bic: r.get("bank_bic")?,
+            bank_name: r.get("bank_name")?,
+            bank_address: r.get("bank_address")?,
         },
         payment_terms_days: r.get("payment_terms_days")?,
         default_notes: r.get("default_notes")?,
@@ -261,6 +275,7 @@ pub(crate) mod test_support {
                 account_name: "N Reiners".into(),
                 sort_code: "12-34-56".into(),
                 account_number: "12345678".into(),
+                ..BankDetails::default()
             },
             payment_terms_days: 30,
             default_notes: "Thank you for your business.".into(),

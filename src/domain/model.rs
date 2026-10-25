@@ -40,6 +40,18 @@ pub struct BankDetails {
     pub account_name: String,
     pub sort_code: String,
     pub account_number: String,
+    /// For payments from abroad; empty if not set. Stored without spaces.
+    /// (`default` keeps snapshots from before these fields existed readable.)
+    #[serde(default)]
+    pub iban: String,
+    /// BIC / SWIFT code; set together with the IBAN.
+    #[serde(default)]
+    pub bic: String,
+    /// Optional; some payers' banks ask for them on SWIFT transfers.
+    #[serde(default)]
+    pub bank_name: String,
+    #[serde(default)]
+    pub bank_address: String,
 }
 
 /// Your own details and app settings. There is exactly one.
@@ -132,6 +144,11 @@ pub struct Client {
 }
 
 impl Client {
+    /// Outside the UK, so paying from abroad.
+    pub fn is_abroad(&self) -> bool {
+        !super::bank::is_uk(&self.address.country)
+    }
+
     pub fn new_empty() -> Self {
         Client {
             id: 0,
@@ -205,6 +222,44 @@ pub struct Snapshot {
     pub client: Client,
 }
 
+impl Snapshot {
+    /// What differs on the invoice between these details and `newer`, as
+    /// short phrases for a confirmation, e.g. `["your bank details", "the client's email"]`.
+    /// Settings that never appear on an invoice are ignored.
+    pub fn printed_changes(&self, newer: &Snapshot) -> Vec<&'static str> {
+        let (b, nb) = (&self.business, &newer.business);
+        let (c, nc) = (&self.client, &newer.client);
+        [
+            (b.name != nb.name, "your name"),
+            (b.address != nb.address, "your address"),
+            (
+                b.email != nb.email || b.phone != nb.phone,
+                "your email or phone",
+            ),
+            (b.bank != nb.bank, "your bank details"),
+            (
+                b.payment_terms_days != nb.payment_terms_days,
+                "the payment terms wording",
+            ),
+            (c.name != nc.name, "the client's name"),
+            (c.contact_name != nc.contact_name, "the client's contact"),
+            (c.email != nc.email, "the client's email"),
+            (c.address != nc.address, "the client's address"),
+            (
+                c.tax_id_label != nc.tax_id_label || c.tax_id != nc.tax_id,
+                "the client's tax ID",
+            ),
+            (
+                c.is_business != nc.is_business || c.late_payment_notice != nc.late_payment_notice,
+                "the late-payment notice",
+            ),
+        ]
+        .into_iter()
+        .filter_map(|(changed, what)| changed.then_some(what))
+        .collect()
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Invoice {
     pub id: i64,
@@ -220,6 +275,9 @@ pub struct Invoice {
     pub issued_at: Option<NaiveDateTime>,
     pub sent_on: Option<NaiveDate>,
     pub snapshot: Option<Snapshot>,
+    /// Set when an issued invoice's business and client details were later
+    /// updated to the current ones (its PDF then differs from the one sent).
+    pub details_updated_on: Option<NaiveDate>,
     pub lines: Vec<LineItem>,
 }
 
@@ -380,6 +438,7 @@ mod tests {
             issued_at: issued.then(|| d(2026, 10, 1).and_hms_opt(9, 0, 0).unwrap()),
             sent_on: sent.then(|| d(2026, 10, 1)),
             snapshot: None,
+            details_updated_on: None,
             lines: vec![],
         }
     }

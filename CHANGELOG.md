@@ -27,6 +27,17 @@
   folder.
 - The client's email is printed under their name and contact, when they
   have one.
+- **International payments:** IBAN, BIC / SWIFT, bank name and bank address
+  in Settings. They're printed in the payment box only for clients outside
+  the UK. tally checks the IBAN's check digits, that a UK IBAN matches your
+  sort code and account number, and that the BIC's country matches.
+  Issuing or previewing for a client abroad without an IBAN set warns you.
+- **Regenerate with current details:** `R` on an issued invoice asks
+  whether to keep the details as issued or update them to your current
+  business and client details. Updating lists what changes, asks again, and
+  is recorded on the invoice ("Details updated to current details on …").
+  The number, dates, lines and amounts never change.
+- Database migrations 5 and 6.
 - Template data: `lines[].detail`, and `draft` (true on previews).
 - CSV export: `expenses.csv` adds billing, rebill client, approval, invoice,
   supplier invoice and receipt file columns.

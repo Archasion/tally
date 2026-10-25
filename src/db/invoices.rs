@@ -189,6 +189,30 @@ impl Db {
         Ok(Preview { invoice, number })
     }
 
+    /// Replaces an issued invoice's business and client details with the
+    /// current ones and records `today` as when that happened. The number,
+    /// dates, lines and amounts don't change, and the client label is kept so
+    /// numbering stays continuous. Returns the updated invoice.
+    pub fn update_issued_details(&self, id: i64, today: NaiveDate) -> Result<Invoice> {
+        let mut inv = self.invoice(id)?;
+        let Some(old) = &inv.snapshot else {
+            bail!("only issued invoices have details to update");
+        };
+        let mut client = self.client(inv.client_id)?;
+        client.label = old.client.label.clone();
+        let snapshot = Snapshot {
+            business: self.require_business()?,
+            client,
+        };
+        self.conn.execute(
+            "UPDATE invoices SET snapshot = ?2, details_updated_on = ?3 WHERE id = ?1",
+            params![id, serde_json::to_string(&snapshot)?, today],
+        )?;
+        inv.snapshot = Some(snapshot);
+        inv.details_updated_on = Some(today);
+        Ok(inv)
+    }
+
     /// Records (or with `None`, clears) the date an issued invoice was sent.
     pub fn set_sent(&self, id: i64, sent_on: Option<NaiveDate>) -> Result<()> {
         let inv = self.invoice(id)?;
@@ -220,6 +244,7 @@ impl Db {
             issued_at: None,
             sent_on: None,
             snapshot: None,
+            details_updated_on: None,
             lines: src.lines,
         };
         self.create_draft(&copy)
@@ -358,6 +383,7 @@ fn invoice_from_row(r: &Row) -> rusqlite::Result<Invoice> {
         issued_at: r.get("issued_at")?,
         sent_on: r.get("sent_on")?,
         snapshot: json_column(r, "snapshot")?,
+        details_updated_on: r.get("details_updated_on")?,
         lines: Vec::new(),
     })
 }
@@ -389,6 +415,7 @@ pub(crate) mod tests {
             issued_at: None,
             sent_on: None,
             snapshot: None,
+            details_updated_on: None,
             lines: vec![
                 LineItem::new(
                     LineKind::Hours,
@@ -729,6 +756,68 @@ pub(crate) mod tests {
         assert_eq!(
             db.invoice(id).unwrap().lines[2].detail,
             issued.lines[2].detail
+        );
+    }
+
+    #[test]
+    fn issued_details_update_only_on_the_record() {
+        let (db, acme) = db_with_client();
+        let id = db.create_draft(&draft(acme, d(2026, 10, 2))).unwrap();
+        let issued = db.issue_invoice(id, now(), |_| Ok(())).unwrap();
+        let mut b = db.require_business().unwrap();
+        b.bank.iban = "GB29NWBK60161331926819".into();
+        db.save_business(&b).unwrap();
+        let mut c = db.client(acme).unwrap();
+        c.email = "ap@acme.example".into();
+        c.label = "ACM".into(); // first label, set after issue
+        db.update_client(&c).unwrap();
+
+        let current = Snapshot {
+            business: db.require_business().unwrap(),
+            client: db.client(acme).unwrap(),
+        };
+        assert_eq!(
+            issued.snapshot.as_ref().unwrap().printed_changes(&current),
+            ["your bank details", "the client's email"]
+        );
+
+        let updated = db.update_issued_details(id, d(2026, 10, 25)).unwrap();
+        let reloaded = db.invoice(id).unwrap();
+        assert_eq!(reloaded, updated);
+        assert_eq!(reloaded.details_updated_on, Some(d(2026, 10, 25)));
+        let snap = reloaded.snapshot.unwrap();
+        assert_eq!(snap.business.bank.iban, "GB29NWBK60161331926819");
+        assert_eq!(snap.client.email, "ap@acme.example");
+        assert_eq!(
+            snap.client.label, "",
+            "the label it was numbered with is kept"
+        );
+        assert_eq!(reloaded.number, issued.number);
+        assert_eq!(reloaded.lines, issued.lines);
+
+        // Raw SQL still can't change the details without recording it, or anything else.
+        let conn = db.connection();
+        assert!(
+            conn.execute("UPDATE invoices SET snapshot = '{}' WHERE id = ?1", [id])
+                .is_err()
+        );
+        assert!(
+            conn.execute("UPDATE invoices SET notes = 'x' WHERE id = ?1", [id])
+                .is_err()
+        );
+        assert!(
+            conn.execute(
+                "UPDATE invoices SET details_updated_on = NULL, snapshot = snapshot WHERE id = ?1",
+                [id]
+            )
+            .is_err()
+        );
+        assert!(
+            db.update_issued_details(
+                db.create_draft(&draft(acme, d(2026, 10, 3))).unwrap(),
+                d(2026, 10, 25)
+            )
+            .is_err()
         );
     }
 

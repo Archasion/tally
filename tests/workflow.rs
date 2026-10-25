@@ -34,6 +34,7 @@ fn full_invoice_lifecycle() {
             account_name: "N Reiners".into(),
             sort_code: "12-34-56".into(),
             account_number: "12345678".into(),
+            ..BankDetails::default()
         },
         payment_terms_days: 30,
         default_notes: String::new(),
@@ -68,6 +69,7 @@ fn full_invoice_lifecycle() {
         issued_at: None,
         sent_on: None,
         snapshot: None,
+        details_updated_on: None,
         lines: vec![LineItem::new(
             LineKind::Days,
             "Consultancy",
@@ -270,6 +272,7 @@ fn reimbursed_purchase_with_receipt() {
         issued_at: None,
         sent_on: None,
         snapshot: None,
+        details_updated_on: None,
         lines: vec![
             LineItem::new(
                 LineKind::Days,

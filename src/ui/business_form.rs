@@ -10,7 +10,7 @@ use ratatui::widgets::{Paragraph, Wrap};
 use super::form::{Form, Outcome};
 use super::{App, Screen, theme};
 use crate::domain::numbering::NumberPattern;
-use crate::domain::{Address, BankDetails, Business};
+use crate::domain::{Address, BankDetails, Business, bank};
 use crate::tax::{LoanPlan, TaxSettings};
 use crate::{backup, paths};
 
@@ -37,6 +37,14 @@ pub fn form(b: Option<&Business>, tax: &TaxSettings) -> Form {
         .hint("e.g. 12-34-56")
         .text("account_number", "Account number", get(|b| b.bank.account_number.clone(), ""))
         .required()
+        .text("iban", "IBAN", get(|b| crate::domain::bank::format_iban(&b.bank.iban), ""))
+        .hint("Optional. For clients outside the UK; printed only on their invoices. From your bank's app")
+        .text("bic", "BIC / SWIFT", get(|b| b.bank.bic.clone(), ""))
+        .hint("Needed with the IBAN, e.g. NWBKGB2L")
+        .text("bank_name", "Bank name", get(|b| b.bank.bank_name.clone(), ""))
+        .hint("Optional; some payers' banks ask for it on international transfers")
+        .text("bank_address", "Bank address", get(|b| b.bank.bank_address.clone(), ""))
+        .hint("Optional, one line, e.g. 250 Bishopsgate, London EC2M 4AA")
         .text("terms", "Payment terms (days)", get(|b| b.payment_terms_days.to_string(), "30"))
         .required()
         .hint("Default days between invoice date and due date (0 = due on receipt)")
@@ -115,6 +123,54 @@ fn parse(form: &mut Form) -> Option<Business> {
         );
         return None;
     }
+    let (iban, bic) = match (form.value("iban").as_str(), form.value("bic").as_str()) {
+        ("", "") => (String::new(), String::new()),
+        ("", _) => {
+            form.fail(
+                "iban",
+                "Enter the IBAN that goes with the BIC, or clear the BIC",
+            );
+            return None;
+        }
+        (_, "") => {
+            form.fail("bic", "International payers need the BIC with the IBAN");
+            return None;
+        }
+        (iban, bic) => {
+            let iban = match bank::normalize_iban(iban) {
+                Ok(i) => i,
+                Err(e) => {
+                    form.fail("iban", e);
+                    return None;
+                }
+            };
+            let bic = match bank::normalize_bic(bic) {
+                Ok(b) => b,
+                Err(e) => {
+                    form.fail("bic", e);
+                    return None;
+                }
+            };
+            if !bank::gb_iban_matches(&iban, &sort_digits, &account) {
+                form.fail(
+                    "iban",
+                    "This IBAN doesn't contain your sort code and account number. Check both",
+                );
+                return None;
+            }
+            if bank::bic_country(&bic) != &iban[..2] {
+                form.fail(
+                    "bic",
+                    format!(
+                        "This BIC is for a different country than the IBAN ({})",
+                        &iban[..2]
+                    ),
+                );
+                return None;
+            }
+            (iban, bic)
+        }
+    };
     let Ok(terms) = form.value("terms").parse::<u32>() else {
         form.fail("terms", "Payment terms must be a whole number of days");
         return None;
@@ -166,6 +222,10 @@ fn parse(form: &mut Form) -> Option<Business> {
                 &sort_digits[4..6]
             ),
             account_number: account,
+            iban,
+            bic,
+            bank_name: form.value("bank_name"),
+            bank_address: form.value("bank_address"),
         },
         payment_terms_days: terms,
         default_notes: form.value("notes"),
@@ -351,6 +411,28 @@ mod tests {
         assert_eq!(b.bank.sort_code, "12-34-56");
         assert_eq!(b.address.postcode, "BS1 1AA");
         assert_eq!(b.payment_terms_days, 30);
+    }
+
+    #[test]
+    fn international_bank_details() {
+        let mut f = filled();
+        f.set_value("sort_code", "60-16-13");
+        f.set_value("account_number", "31926819");
+        f.set_value("iban", "gb29 nwbk 6016 1331 9268 19");
+        assert!(parse(&mut f).is_none(), "BIC is required with an IBAN");
+        assert_eq!(f.focused_key(), "bic");
+        f.set_value("bic", "nwbkgb2l");
+        let b = parse(&mut f).unwrap();
+        assert_eq!(b.bank.iban, "GB29NWBK60161331926819");
+        assert_eq!(b.bank.bic, "NWBKGB2L");
+
+        f.set_value("account_number", "31926810");
+        assert!(parse(&mut f).is_none());
+        assert_eq!(f.focused_key(), "iban");
+        f.set_value("account_number", "31926819");
+        f.set_value("bic", "NWBKDEFF");
+        assert!(parse(&mut f).is_none());
+        assert_eq!(f.focused_key(), "bic");
     }
 
     #[test]

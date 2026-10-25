@@ -70,6 +70,12 @@ pub struct PaymentData {
     pub account_name: String,
     pub sort_code: String,
     pub account_number: String,
+    /// For clients outside the UK only, when set in Settings; otherwise `""`.
+    /// The IBAN is grouped in fours.
+    pub iban: String,
+    pub bic: String,
+    /// The bank's name and address on one line, e.g. `NatWest, 250 Bishopsgate…`.
+    pub bank: String,
     pub reference: String,
     pub terms: String,
 }
@@ -123,6 +129,7 @@ impl DocumentData {
                 account_number: b.bank.account_number.clone(),
                 reference: number,
                 terms,
+                ..international_details(snap)
             }),
             notes: inv.notes.trim().to_string(),
             late_payment_notice: late_payment_notice(snap),
@@ -172,6 +179,41 @@ impl DocumentData {
             notes: String::new(),
             late_payment_notice: String::new(),
         }
+    }
+}
+
+/// IBAN, BIC and bank for clients paying from abroad. Empty for UK clients,
+/// or if no IBAN is set, so the payment box stays as UK payers expect.
+fn international_details(snap: &Snapshot) -> PaymentData {
+    let bank = &snap.business.bank;
+    let abroad = snap.client.is_abroad() && !bank.iban.is_empty();
+    let pick = |s: &str| {
+        if abroad {
+            s.trim().to_string()
+        } else {
+            String::new()
+        }
+    };
+    PaymentData {
+        account_name: String::new(),
+        sort_code: String::new(),
+        account_number: String::new(),
+        iban: if abroad {
+            crate::domain::bank::format_iban(&bank.iban)
+        } else {
+            String::new()
+        },
+        bic: pick(&bank.bic),
+        bank: pick(
+            &[bank.bank_name.trim(), bank.bank_address.trim()]
+                .iter()
+                .filter(|s| !s.is_empty())
+                .copied()
+                .collect::<Vec<_>>()
+                .join(", "),
+        ),
+        reference: String::new(),
+        terms: String::new(),
     }
 }
 
@@ -376,6 +418,7 @@ pub fn sample_invoice() -> Invoice {
             account_name: "Your Name".into(),
             sort_code: "00-00-00".into(),
             account_number: "00000000".into(),
+            ..BankDetails::default()
         },
         payment_terms_days: 30,
         default_notes: String::new(),
@@ -411,6 +454,7 @@ pub fn sample_invoice() -> Invoice {
         issued_at: Some(issue.and_hms_opt(9, 0, 0).expect("valid time")),
         sent_on: None,
         snapshot: Some(Snapshot { business, client }),
+        details_updated_on: None,
         lines: vec![
             LineItem::new(
                 LineKind::Days,
@@ -477,6 +521,54 @@ mod tests {
         );
         let data = DocumentData::for_draft_preview(&inv, None).unwrap();
         assert_eq!(data.number, "not yet numbered");
+    }
+
+    #[test]
+    fn iban_and_bic_only_for_clients_abroad() {
+        let mut inv = sample_invoice();
+        let snap = inv.snapshot.as_mut().unwrap();
+        snap.business.bank.iban = "GB29NWBK60161331926819".into();
+        snap.business.bank.bic = "NWBKGB2L".into();
+        snap.business.bank.bank_name = "NatWest".into();
+        snap.business.bank.bank_address = "250 Bishopsgate, London EC2M 4AA".into();
+
+        // UK client: the usual sort code and account number only.
+        let uk = DocumentData::for_invoice(&inv).unwrap().payment.unwrap();
+        assert_eq!(
+            (uk.iban.as_str(), uk.bic.as_str(), uk.bank.as_str()),
+            ("", "", "")
+        );
+
+        inv.snapshot.as_mut().unwrap().client.address.country = "Germany".into();
+        let data = DocumentData::for_invoice(&inv).unwrap();
+        let abroad = data.payment.as_ref().unwrap();
+        assert_eq!(abroad.iban, "GB29 NWBK 6016 1331 9268 19");
+        assert_eq!(abroad.bic, "NWBKGB2L");
+        assert_eq!(abroad.bank, "NatWest, 250 Bishopsgate, London EC2M 4AA");
+        assert!(
+            Renderer::builtin()
+                .render(&data)
+                .unwrap()
+                .starts_with(b"%PDF-")
+        );
+
+        // No IBAN set: nothing extra, even abroad.
+        inv.snapshot.as_mut().unwrap().business.bank.iban.clear();
+        assert_eq!(
+            DocumentData::for_invoice(&inv)
+                .unwrap()
+                .payment
+                .unwrap()
+                .bic,
+            ""
+        );
+    }
+
+    #[test]
+    fn snapshots_from_before_international_bank_details_still_load() {
+        let old = r#"{"account_name":"N","sort_code":"12-34-56","account_number":"12345678"}"#;
+        let b: crate::domain::BankDetails = serde_json::from_str(old).unwrap();
+        assert_eq!(b.iban, "");
     }
 
     #[test]

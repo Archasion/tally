@@ -47,6 +47,7 @@ impl Editor {
             issued_at: None,
             sent_on: None,
             snapshot: None,
+            details_updated_on: None,
             lines: Vec::new(),
         };
         let mut e = Self::edit(invoice, business, clients);

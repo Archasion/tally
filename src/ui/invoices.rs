@@ -320,11 +320,14 @@ impl App {
         })?;
         self.refresh()?;
         let receipts = self.enclose_receipts(&inv);
-        self.success(format!(
-            "Issued {}{receipts} → {}",
-            inv.display_number(),
-            paths::display(&written)
-        ));
+        match missing_iban(&inv) {
+            Some(note) => self.info(format!("Issued {}{receipts}. {note}", inv.display_number())),
+            None => self.success(format!(
+                "Issued {}{receipts} → {}",
+                inv.display_number(),
+                paths::display(&written)
+            )),
+        }
         Ok(())
     }
 
@@ -335,6 +338,20 @@ impl App {
         let out = self.output_dir();
         let path = self.renderer()?.write_invoice(&out, &inv)?;
         Ok((path, self.enclose_receipts(&inv)))
+    }
+
+    /// What updating an issued invoice to the current details would change
+    /// on it. Empty if nothing printed differs.
+    pub(super) fn detail_changes(&self, id: i64) -> Result<Vec<&'static str>> {
+        let inv = self.db.invoice(id)?;
+        let Some(old) = &inv.snapshot else {
+            return Ok(Vec::new());
+        };
+        let current = crate::domain::Snapshot {
+            business: self.db.require_business()?,
+            client: self.db.client(inv.client_id)?,
+        };
+        Ok(old.printed_changes(&current))
     }
 
     /// Copies the receipts for an invoice's reimbursements next to its PDF.
@@ -362,12 +379,16 @@ impl App {
         let preview = self.db.preview_invoice(inv)?;
         let path = self.renderer()?.write_preview(&preview)?;
         open_path(&path)?;
-        self.info(match &preview.number {
+        let mut msg = match &preview.number {
             Ok(n) => format!(
                 "Preview opened. Issued now, it would be {n}. Nothing was saved or numbered."
             ),
             Err(why) => format!("Preview opened without a number: {why}"),
-        });
+        };
+        if let Some(note) = missing_iban(&preview.invoice) {
+            msg = format!("{note}. {msg}");
+        }
+        self.info(msg);
         Ok(())
     }
 
@@ -516,17 +537,7 @@ impl App {
             }
             KeyCode::Char('s') if !is_draft => self.open_form(Purpose::MarkSent(id), None),
             KeyCode::Char('o') if !is_draft => self.open_invoice_pdf(id)?,
-            KeyCode::Char('R') if !is_draft => {
-                let warning = if paths::template_override(&self.output_dir()).is_file() {
-                    "\n\nYou have a template.typ override, so the regenerated PDF may look different from the one you sent."
-                } else {
-                    ""
-                };
-                self.confirm(
-                    format!("Regenerate the PDF for {number}? It uses the details frozen at issue time.{warning}"),
-                    Action::Regenerate(id),
-                );
-            }
+            KeyCode::Char('R') if !is_draft => self.open_form(Purpose::Regenerate(id), None),
             KeyCode::Enter => {
                 if let Some(cn) = selected_cn {
                     self.open_credit_note_pdf(&cn)?;
@@ -600,6 +611,12 @@ impl App {
                 inv.sent_on
                     .map(dates::long)
                     .unwrap_or_else(|| "not marked as sent".into()),
+            ));
+        }
+        if let Some(on) = inv.details_updated_on {
+            info.push(kv(
+                "Details",
+                format!("updated to current details on {}", dates::long(on)),
             ));
         }
         if let Some(pdf) = &d.pdf {
@@ -750,6 +767,17 @@ impl App {
             &mut d.sel,
         );
     }
+}
+
+/// A warning when a client abroad would only see UK bank details.
+fn missing_iban(inv: &Invoice) -> Option<String> {
+    let snap = inv.snapshot.as_ref()?;
+    (snap.client.is_abroad() && snap.business.bank.iban.is_empty()).then(|| {
+        format!(
+            "{} is outside the UK, but there's no IBAN in Settings, so they only see UK bank details",
+            snap.client.name
+        )
+    })
 }
 
 fn join_nonempty(parts: &[&str]) -> String {
