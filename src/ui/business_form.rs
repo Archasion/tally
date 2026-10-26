@@ -154,13 +154,6 @@ fn parse(form: &mut Form) -> Option<Business> {
                     return None;
                 }
             };
-            if !bank::gb_iban_matches(&iban, &sort_digits, &account) {
-                form.fail(
-                    "iban",
-                    "This IBAN doesn't contain your sort code and account number. Check both",
-                );
-                return None;
-            }
             if bank::bic_country(&bic) != &iban[..2] {
                 form.fail(
                     "bic",
@@ -434,10 +427,10 @@ mod tests {
         assert_eq!(b.bank.iban, "GB29NWBK60161331926819");
         assert_eq!(b.bank.bic, "NWBKGB2L");
 
-        f.set_value("account_number", "31926810");
-        assert!(parse(&mut f).is_none());
-        assert_eq!(f.focused_key(), "iban");
-        f.set_value("account_number", "31926819");
+        // Some banks (e.g. Revolut) issue IBANs without the UK sort code and
+        // account number, so they don't have to match.
+        f.set_value("account_number", "12345678");
+        assert!(parse(&mut f).is_some());
         f.set_value("bic", "NWBKDEFF");
         assert!(parse(&mut f).is_none());
         assert_eq!(f.focused_key(), "bic");

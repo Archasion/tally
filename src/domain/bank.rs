@@ -39,18 +39,6 @@ pub fn normalize_iban(input: &str) -> Result<String, String> {
     Ok(iban)
 }
 
-/// Whether a UK IBAN carries this sort code and account number. Always true
-/// for other countries' IBANs, which don't contain them.
-pub fn gb_iban_matches(iban: &str, sort_code: &str, account_number: &str) -> bool {
-    if !iban.starts_with("GB") || iban.len() != 22 {
-        return true;
-    }
-    let sort: String = sort_code.chars().filter(char::is_ascii_digit).collect();
-    // UK IBANs hold 8-digit account numbers; shorter ones are zero-padded.
-    let account = format!("{account_number:0>8}");
-    iban[8..14] == sort && iban[14..] == account
-}
-
 /// Groups an IBAN in fours for printing: `GB29 NWBK 6016 1331 9268 19`.
 pub fn format_iban(iban: &str) -> String {
     iban.as_bytes()
@@ -126,15 +114,6 @@ mod tests {
             format_iban("GB29NWBK60161331926819"),
             "GB29 NWBK 6016 1331 9268 19"
         );
-    }
-
-    #[test]
-    fn uk_ibans_must_match_the_account() {
-        let iban = "GB29NWBK60161331926819";
-        assert!(gb_iban_matches(iban, "60-16-13", "31926819"));
-        assert!(!gb_iban_matches(iban, "60-16-14", "31926819"));
-        assert!(!gb_iban_matches(iban, "60-16-13", "31926810"));
-        assert!(gb_iban_matches("DE89370400440532013000", "60-16-13", "1"));
     }
 
     #[test]

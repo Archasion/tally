@@ -29,8 +29,10 @@
   have one.
 - **International payments:** IBAN, BIC / SWIFT, bank name and bank address
   in Settings. They're printed in the payment box only for clients outside
-  the UK. tally checks the IBAN's check digits, that a UK IBAN matches your
-  sort code and account number, and that the BIC's country matches.
+  the UK. tally checks the IBAN's check digits and that the BIC's country
+  matches. It doesn't compare a UK IBAN with your sort code and account
+  number, since banks like Revolut and Wise issue IBANs that don't contain
+  them.
   Issuing or previewing for a client abroad without an IBAN set warns you.
 - **Regenerate with current details:** `R` on an issued invoice asks
   whether to keep the details as issued or update them to your current
