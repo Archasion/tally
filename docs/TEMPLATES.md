@@ -63,7 +63,7 @@ string. Money is already formatted (`£1,800.00`) and dates are written out
 | `draft` | `false` | `true` on a draft preview; the built-in template adds a DRAFT watermark |
 | `number` | `"2026-0001"` or `"LGT-2026-0001"` | on a preview, the number it would get if issued now, or `"not yet numbered"` |
 | `business.name` | `"Nick Schreiner"` | your name, or the name you trade under |
-| `business.legal_name` | `"Nikita Šreiners"` | only when you trade under a different name, otherwise `""`; the built-in template prints "Trading name of …" under `business.name`, as UK law requires. Always `""` for `client` |
+| `business.legal_name` | `"Jana Šimková"` | only when you trade under a different name, otherwise `""`; the built-in template prints "Trading name of …" under `business.name`, as UK law requires. Always `""` for `client` |
 | `business.address` | `["1 High Street", "Bristol", "BS1 1AA"]` | blank lines removed |
 | `business.email`, `business.phone` | | may be `""` |
 | `client_heading` | `"Bill to"` / `"Credit to"` | |

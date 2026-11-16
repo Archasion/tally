@@ -588,9 +588,9 @@ mod tests {
         assert_eq!(party(&inv).legal_name, "");
         inv.snapshot.as_mut().unwrap().business.legal_name = " nick schreiner ".into();
         assert_eq!(party(&inv).legal_name, "", "same as the trading name");
-        inv.snapshot.as_mut().unwrap().business.legal_name = "Nikita Šreiners".into();
+        inv.snapshot.as_mut().unwrap().business.legal_name = "Jana Šimková".into();
         let data = DocumentData::for_invoice(&inv).unwrap();
-        assert_eq!(data.business.legal_name, "Nikita Šreiners");
+        assert_eq!(data.business.legal_name, "Jana Šimková");
         assert_eq!(data.client.legal_name, "");
         assert!(
             Renderer::builtin()

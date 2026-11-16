@@ -406,9 +406,9 @@ mod tests {
     #[test]
     fn parses_and_normalises() {
         let mut f = filled();
-        f.set_value("legal_name", "Nikita Šreiners");
+        f.set_value("legal_name", "Jana Šimková");
         let b = parse(&mut f).unwrap();
-        assert_eq!(b.legal_name, "Nikita Šreiners");
+        assert_eq!(b.legal_name, "Jana Šimková");
         assert_eq!(b.bank.sort_code, "12-34-56");
         assert_eq!(b.address.postcode, "BS1 1AA");
         assert_eq!(b.payment_terms_days, 30);

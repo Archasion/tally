@@ -54,10 +54,10 @@ embedded [Typst](https://typst.app) compiler. No external tools are needed.
     approval and supplier invoice number, and issuing places the receipts
     next to the invoice PDF, ready to attach to the same email. Each
     purchase can be billed only once.
-- **Trading names:** invoice under a name such as *Nick Schreiner* and set
-  your legal name in Settings. tally prints "Trading name of Nikita
-  Šreiners" under it, as UK law requires. Keep the bank account name exactly
-  as your bank has it, so payers' name checks match.
+- **Trading names:** invoice under a name such as *Northgate Design* and set
+  your legal name in Settings. tally prints "Trading name of Jana Šimková"
+  under it, as UK law requires. Keep the bank account name exactly as your
+  bank has it, so payers' name checks match.
 - **Invoice notes**, printed under the payment details. New invoices start
   with the default notes from Settings.
 - **Tax estimate:**
